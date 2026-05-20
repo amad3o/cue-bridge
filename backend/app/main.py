@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.parsers.rekordbox_parser import parse_rekordbox_xml
+from app.parsers.serato_parser import parse_serato_metadata
 
 app = FastAPI()
 
