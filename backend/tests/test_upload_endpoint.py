@@ -1,9 +1,9 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app import main
-from app.main import app
-from app.services import rekordbox_service
+from cuebridge.web import main
+from cuebridge.web.main import app
+from cuebridge.services import rekordbox_service
 
 client = TestClient(app)
 

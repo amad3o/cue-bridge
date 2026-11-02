@@ -2,7 +2,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from app.parsers.rekordbox_parser import (
+from cuebridge.parsers.rekordbox_parser import (
     RekordboxParseError,
     _parse_color,
     _parse_location,

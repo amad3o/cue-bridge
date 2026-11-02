@@ -16,7 +16,8 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
   - loop end time (`endMs`) and hex color
   - `filePath` decoded from `Location`
   - fade and load markers skipped, and bad marks no longer crash the parse
-- Pydantic models (`app/models.py`): `Cue`, `Track`.
+- Pydantic models (`cuebridge/models.py`): `Cue`, `Track`.
+- Path-based service layer (`cuebridge/services/rekordbox_service.py`) with validation, domain errors, and an mtime-based library cache. The HTTP endpoints call it, and so will the MCP server.
 - `RekordboxParseError` for XML that isn't a Rekordbox export.
 - pytest suite for the parser and the upload endpoint.
 - Root `.gitignore`, and cache files untracked.
@@ -35,7 +36,7 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 3. **Large libraries need a plan for AI output.** Returning every track would flood the assistant's context. Tools need summaries, filters and pagination. The legacy API's silent 100-track cap is not a model to copy.
 4. **No tests for Serato yet,** and no sample Serato fixtures.
 5. **README is out of date.** It lists Tailwind and shadcn/ui, which aren't installed, and has no setup or run instructions.
-6. **Housekeeping.** `requirements.txt` has no pinned Python version, and `backend/app/parsers/.DS_Store` may still be tracked.
+6. **Housekeeping.** `requirements.txt` has no pinned Python version, and a `.DS_Store` may still be tracked.
 7. **UI bugs to fix when the UI is revived (section 7).**
    - The arrow-key listener is global, so it fires while typing in the search box.
    - Row keys aren't stable, sort direction never flips, and selection isn't reset when the filter changes.
@@ -46,7 +47,15 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 ### 1. Restructure the core for reuse
 
 - [x] Move logic out of `main.py` into a service layer that takes **file paths** (not uploads) and returns models. The HTTP endpoints and the MCP server both call it.
-- [ ] Move shared models out of the web layer, and decide on a package layout (for example `cuebridge/` with `parsers/`, `models.py` and `services/`).
+- [x] Move shared models out of the web layer, and decide on a package layout. The `app` package is now `cuebridge` (a generic top-level name like `app` can't be installed alongside other packages, which the packaging item in section 6 needs):
+  ```
+  backend/cuebridge/
+    models.py      shared Pydantic models
+    parsers/       file formats to models
+    services/      path-based logic: validation, caching
+    web/main.py    FastAPI app (run with: uvicorn cuebridge.web.main:app)
+    (mcp_server.py goes here in section 2; avoid naming a package `mcp`, which would shadow the SDK)
+  ```
 - [x] Make "unknown" explicit: use `None` for missing title or artist, not the string `"Unknown"`.
 - [x] Add a library cache so a large XML is parsed once per session, not on every tool call. `get_rekordbox_library(path)` keys on the resolved path, re-parses when the file's mtime or size changes, and keeps the last 4 libraries.
 

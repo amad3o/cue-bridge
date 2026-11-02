@@ -1,10 +1,10 @@
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.models import RekordboxUploadResponse
-from app.parsers.serato_parser import parse_serato_metadata
-from app.services import rekordbox_service
-from app.services.rekordbox_service import FileTooLargeError, LibraryError
+from cuebridge.models import RekordboxUploadResponse
+from cuebridge.parsers.serato_parser import parse_serato_metadata
+from cuebridge.services import rekordbox_service
+from cuebridge.services.rekordbox_service import FileTooLargeError, LibraryError
 
 MAX_TRACKS_RETURNED = 100
 

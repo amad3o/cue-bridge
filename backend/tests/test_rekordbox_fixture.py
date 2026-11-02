@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.services.rekordbox_service import parse_rekordbox_file
+from cuebridge.services.rekordbox_service import parse_rekordbox_file
 
 FIXTURE = Path(__file__).parent / "fixtures" / "rekordbox_sample.xml"
 

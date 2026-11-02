@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from app.services import rekordbox_service
-from app.services.rekordbox_service import (
+from cuebridge.services import rekordbox_service
+from cuebridge.services.rekordbox_service import (
     InvalidFileError,
     clear_cache,
     get_rekordbox_library,

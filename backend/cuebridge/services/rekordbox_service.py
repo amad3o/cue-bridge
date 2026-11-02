@@ -11,8 +11,8 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.models import Track
-from app.parsers.rekordbox_parser import RekordboxParseError, parse_rekordbox_xml
+from cuebridge.models import Track
+from cuebridge.parsers.rekordbox_parser import RekordboxParseError, parse_rekordbox_xml
 
 MAX_FILE_BYTES = 100 * 1024 * 1024  # 100 MB
 MAX_CACHED_LIBRARIES = 4
