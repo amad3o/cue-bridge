@@ -1,37 +1,119 @@
+import re
 import xml.etree.ElementTree as ET
+from urllib.parse import unquote
+
+# Rekordbox POSITION_MARK Type values.
+# 0 = cue, 1 = fade-in, 2 = fade-out, 3 = load marker, 4 = loop.
+# Only cues and loops are parsed; fades and load markers have no Serato equivalent.
+TYPE_CUE = "0"
+TYPE_LOOP = "4"
+
+
+def _to_int(value, default=None):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _seconds_to_ms(value):
+    try:
+        return int(float(value) * 1000)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_color(attrib):
+    channels = [_to_int(attrib.get(c)) for c in ("Red", "Green", "Blue")]
+
+    if any(c is None for c in channels):
+        return None
+
+    r, g, b = (max(0, min(255, c)) for c in channels)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _parse_location(location):
+    """Turn file://localhost/Users/me/My%20Song.mp3 into /Users/me/My Song.mp3."""
+    if not location:
+        return None
+
+    path = re.sub(r"^file://(localhost)?", "", location)
+    path = unquote(path)
+
+    # Windows paths arrive as /C:/Music/song.mp3
+    if re.match(r"^/[A-Za-z]:/", path):
+        path = path[1:]
+
+    return path
+
+
+def _parse_cue(mark, track_id, track_name, artist, file_path):
+    mark_type = mark.attrib.get("Type")
+
+    if mark_type not in (TYPE_CUE, TYPE_LOOP):
+        return None
+
+    time_ms = _seconds_to_ms(mark.attrib.get("Start"))
+
+    if time_ms is None:
+        return None
+
+    num = _to_int(mark.attrib.get("Num"), -1)
+    is_memory = num < 0
+
+    if mark_type == TYPE_LOOP:
+        cue_type = "loop"
+    elif is_memory:
+        cue_type = "memory"
+    else:
+        cue_type = "hotcue"
+
+    return {
+        "id": f"rekordbox-{track_id}-{cue_type}-{num}-{time_ms}",
+        "source": "rekordbox",
+        "trackTitle": track_name,
+        "artist": artist,
+        "filePath": file_path,
+        "cueIndex": None if is_memory else num,
+        "cueName": mark.attrib.get("Name") or "Unnamed cue",
+        "timeMs": time_ms,
+        "endMs": _seconds_to_ms(mark.attrib.get("End")) if mark_type == TYPE_LOOP else None,
+        "color": _parse_color(mark.attrib),
+        "cueType": cue_type,
+    }
+
 
 def parse_rekordbox_xml(xml_content: bytes):
     root = ET.fromstring(xml_content)
-
-    tracks = []
 
     collection = root.find("COLLECTION")
 
     if collection is None:
         return []
 
-    for track in collection.findall("TRACK"):
+    tracks = []
+
+    for position, track in enumerate(collection.findall("TRACK")):
+        track_id = track.attrib.get("TrackID") or f"idx{position}"
         track_name = track.attrib.get("Name", "Unknown")
         artist = track.attrib.get("Artist", "Unknown")
+        file_path = _parse_location(track.attrib.get("Location"))
 
         cues = []
 
-        for cue in track.findall("POSITION_MARK"):
-            cues.append({
-                "id": f"rekordbox-{track_name}-{cue.attrib.get('Num', '0')}",
-                "source": "rekordbox",
-                "trackTitle": track_name,
-                "artist": artist,
-                "cueIndex": int(cue.attrib.get("Num", 0)),
-                "cueName": cue.attrib.get("Name") or "Unnamed cue",
-                "timeMs": int(float(cue.attrib.get("Start", 0)) * 1000),
-                "color": None,
-                "cueType": "hotcue",
-            })
+        for mark in track.findall("POSITION_MARK"):
+            cue = _parse_cue(mark, track_id, track_name, artist, file_path)
+
+            if cue is not None:
+                cues.append(cue)
 
         tracks.append({
+            "trackId": track_id,
             "trackTitle": track_name,
             "artist": artist,
+            "filePath": file_path,
             "cues": cues,
         })
+
     return tracks
