@@ -1,114 +1,123 @@
 # CueBridge Roadmap
 
+CueBridge is moving from a web UI to an **MCP server**. The goal is for an AI assistant such as Claude to read, compare and convert DJ cue points between Rekordbox and Serato by calling tools against files on the user's own machine.
+
+The parsing, matching and conversion logic stays in plain Python. The MCP server is a thin layer over it.
+
+**Text first, UI later.** Every tool returns a clear text summary the assistant can show in chat, such as "12 tracks change, 31 cues added, 2 conflicts", with a short diff of the first few items. The React UI is deferred. Once the text workflow is complete, an optional review page that the MCP server opens (section 7) can be added where the text summary falls short.
+
 ## Completed
 
-**Backend (FastAPI)**
+**Core (Python)**
 
-- `POST /upload/rekordbox` parses Rekordbox XML and returns `filename`, `tracksFound` and the first 100 tracks. Each track has its normalized cues.
-- CORS is set up for the Vite dev server at `localhost:5173`.
-- `POST /upload/serato` accepts a file and returns its size and a 1000-byte text preview. This is a stub. It parses no tracks.
 - Rekordbox parser normalizes cues:
   - unique IDs built from `TrackID`, cue type, slot and time
   - hot cue, memory and loop types, with a null `cueIndex` for memory cues
   - loop end time (`endMs`) and hex color
   - `filePath` decoded from `Location`
-  - fade and load markers skipped, and bad marks no longer crash the upload
+  - fade and load markers skipped, and bad marks no longer crash the parse
+- Pydantic models (`app/models.py`): `Cue`, `Track`.
+- `RekordboxParseError` for XML that isn't a Rekordbox export.
 - pytest suite for the parser and the upload endpoint.
-- Pydantic response models (`app/models.py`) and upload validation: `.xml` only, 100 MB limit, and clear 400/413 errors for empty, malformed or non-Rekordbox files.
 - Root `.gitignore`, and cache files untracked.
 
-**Frontend (React + TS + Vite)**
+**Web UI (prototype, on hold until the text workflow is complete)**
 
-- Rekordbox XML upload, by file picker or drag-and-drop, with loading and error states.
-- `TrackTable`:
-  - sortable by title, artist or cue count
-  - up/down arrow keyboard row selection
-  - cue-time summary column
-- Search box and a "only tracks with cues" filter.
-- Shared `NormalizedCue` and `Track` types (updated for `endMs`, `trackId`, `filePath` and nullable `cueIndex`/`color`), plus `formatCueTime`.
-- `CueCard` shows loop end, slot or "Memory", and cue color.
-- Serato upload button that logs the preview and shows a size summary.
-- `CueCard` and `CueComparison` components exist but nothing renders them yet.
+- FastAPI `POST /upload/rekordbox` with validation (`.xml` only, 100 MB limit, clear 400/413 errors) and `POST /upload/serato` (a stub that parses no tracks).
+- React upload screen, sortable and searchable `TrackTable`, and `CueCard` / `CueComparison` components. Shared TypeScript types match the API.
 
-## Issues and bugs
+## Known issues
 
-1. ~~**Cue ID collisions.** The ID is `rekordbox-{trackName}-{Num}`, so two tracks with the same title produce duplicate IDs. Use the track's `TrackID` or `Location` instead.~~ Fixed.
-2. ~~**Rekordbox cue types are all labeled "hotcue".**~~ Fixed.
-   - In Rekordbox XML, `Num=-1` is a memory cue. `Type` distinguishes cues from loops (`Type=4`, with an `End` attribute).
-   - Loops and memory cues are mis-typed, and `End` is ignored.
-   - `Num=-1` also gives `cueIndex` -1.
-3. ~~**Cue `color` is always `None`.** The `Red`, `Green` and `Blue` attributes are ignored.~~ Fixed.
-4. ~~**`filePath` is never populated.** The `Location` attribute is ignored. Without it you can't match tracks between Rekordbox and Serato.~~ Fixed.
-5. **API truncates to 100 tracks** (`parsed_tracks[:100]`) with no pagination. Large libraries silently lose data.
-6. **Parser has no error handling.**
-   - ~~Malformed XML raises `ParseError`, which returns a 500.~~ Fixed: returns a 400.
-   - ~~Missing or non-numeric values raise as well.~~ Fixed in the parser.
-   - ~~There is no upload size or type validation.~~ Fixed: `.xml` only, 100 MB max.
-   - Missing names default to the string `"Unknown"`, which is indistinguishable from real data.
-7. **The Serato "parser" only decodes bytes as UTF-8.**
+1. **Serato parser is a stub.** It decodes the bytes as UTF-8, which is garbage for binary data.
    - Serato stores cues in binary `Serato Markers2` / `Markers_` ID3/GEOB tags inside the audio files themselves.
-   - Crates are `.crate` files and the library is a `database V2` file. These are binary too, so the preview is garbage.
-8. **TrackTable bugs.**
-   - Row keys use the title plus the index, so they aren't stable.
-   - Sort arrows only show on the active column and never flip direction.
-   - The arrow-key listener is global, so it fires while typing in the search box and blocks cursor movement.
-   - The selection index isn't reset when the filter changes.
-   - There is no scroll-into-view.
-   - Time formatting is duplicated inline instead of using `formatCueTime`.
-9. **Hardcoded `http://localhost:8000` in the API services.** Move it to an env var or a Vite proxy. The `allow_credentials` and origin settings are also dev-only.
-10. **The README is out of date.**
-    - It lists Tailwind and shadcn/ui, but neither is installed. Everything uses inline styles.
-    - It doesn't mention Serato, the setup steps or how to run the app.
-    - It says Pydantic, but no models are defined.
-11. **Housekeeping.**
-    - `requirements.txt` has no pinned Python version.
-    - There are no frontend tests, and no tests for the API endpoints.
-    - `RekordboxUploader` handles both uploaders plus filtering, so it's too big.
-    - The Serato response type declares `tracks: []`.
+   - Crates are `.crate` files and the library is a `database V2` file. These are binary too, and only hold track lists.
+2. **Missing names default to the string `"Unknown"`**, which is indistinguishable from real data.
+3. **Large libraries need a plan for AI output.** Returning every track would flood the assistant's context. Tools need summaries, filters and pagination. The legacy API's silent 100-track cap is not a model to copy.
+4. **No tests for Serato yet,** and no sample Serato fixtures.
+5. **README is out of date.** It lists Tailwind and shadcn/ui, which aren't installed, and has no setup or run instructions.
+6. **Housekeeping.** `requirements.txt` has no pinned Python version, and `backend/app/parsers/.DS_Store` may still be tracked.
+7. **UI bugs to fix when the UI is revived (section 7).**
+   - The arrow-key listener is global, so it fires while typing in the search box.
+   - Row keys aren't stable, sort direction never flips, and selection isn't reset when the filter changes.
+   - The API URL is hardcoded to `localhost:8000`.
 
 ## To do
 
-### Near term: finish the MVP (Rekordbox to UI)
+### 1. Restructure the core for reuse
 
-- [x] Commit the parser fix. Add `.gitignore` entries for `__pycache__` and `.DS_Store`, then `git rm --cached` them.
-- [x] Fix cue IDs, cue types (hot, memory, loop), loop end time, color and file path in the Rekordbox parser.
-- [x] Add Pydantic response models. This matches what the README promises.
-- [x] Add error handling and validation for uploads.
-- [ ] Add track detail view or expandable rows that use `CueCard`.
-- [ ] Remove the 100-track cap by adding pagination or virtualized rows.
-- [ ] Update the README and add run instructions.
+- [ ] Move logic out of `main.py` into a service layer that takes **file paths** (not uploads) and returns models. The HTTP endpoints and the MCP server both call it.
+- [ ] Move shared models out of the web layer, and decide on a package layout (for example `cuebridge/` with `parsers/`, `models.py` and `services/`).
+- [ ] Make "unknown" explicit: use `None` for missing title or artist, not the string `"Unknown"`.
+- [ ] Add a library cache so a large XML is parsed once per session, not on every tool call.
 
-### Serato support (the core feature)
+### 2. MCP server, read-only (Rekordbox)
 
-- [ ] Decide on the Serato input. Reading cues from audio-file tags (`Serato Markers2`, using mutagen or a custom GEOB decoder) is the realistic route. The `database V2` and crate files only hold track lists.
+- [ ] Add the official Python MCP SDK (`mcp`, `FastMCP`) and a `mcp_server.py` entry point using stdio.
+- [ ] Tools, all with compact, paginated output:
+  - `load_rekordbox_library(path)`: parses and caches, returns a summary (track count, cue totals by type).
+  - `search_tracks(query, has_cues, limit, offset)`: filter and page through tracks.
+  - `get_track_cues(track_id)`: full cue detail for one track.
+  - `find_tracks_without_cues()` and basic library stats.
+- [ ] Clear tool descriptions and error messages that tell the assistant what to do next (for example "load a library first").
+- [ ] Document how to register the server in Claude Desktop and Claude Code.
+- [ ] Tests that call the tool functions directly with sample fixtures.
+
+### 3. Serato support (the riskiest part)
+
+- [ ] Decide on the Serato input: read cues from audio-file tags (`Serato Markers2`, using mutagen or a custom GEOB decoder). Use crates and `database V2` only to list tracks.
+- [ ] Collect small real Serato-tagged fixtures for tests.
 - [ ] Write a real `serato_parser` that returns `Track[]` in the same normalized shape.
+- [ ] Tool: `load_serato_library(path)` or `read_serato_cues(folder_or_file)`.
+
+### 4. Compare
+
 - [ ] Match tracks across the two systems by file path, falling back to artist and title (and duration).
-- [ ] Wire up `CueComparison` to show Rekordbox and Serato cues side by side, with missing and mismatched cues flagged.
+- [ ] Tool: `compare_libraries()`, returning a summary plus paginated detail of missing, mismatched and conflicting cues.
+- [ ] Tool: `find_unmatched_tracks()`, listing tracks that couldn't be matched.
 
-### Conversion and export (the actual "bridge")
+### 5. Convert and export (the actual "bridge")
 
-- [ ] Rekordbox to Serato: write cues into Serato tags.
-- [ ] Serato to Rekordbox: generate a Rekordbox XML with `POSITION_MARK`s.
 - [ ] Cue color and slot mapping between the two systems.
-- [ ] A dry-run preview and a backup before any write to the user's files.
-- [ ] Download or export endpoints.
+- [ ] Serato to Rekordbox: generate a Rekordbox XML with `POSITION_MARK`s. This writes a new file and leaves the user's library alone.
+- [ ] Rekordbox to Serato: write cues into Serato tags in audio files.
+- [ ] **Safety before any write to audio files:**
+  - every write tool defaults to `dry_run=True` and returns a preview
+  - a dry run saves a pending plan and returns a plan ID with a text summary and diff
+  - a separate `apply_plan(plan_id)` tool performs the write, and only for a plan that was previewed first
+  - plans expire after a short time and are invalidated if the source files change, so a stale plan can't be applied
+  - automatic backup before modifying a file, and an `undo_plan(plan_id)` tool that restores it
+  - a per-plan limit on files modified
+  - note: an assistant can call `apply_plan` itself, so the real check is the MCP client's per-call approval prompt. The tool description should tell the assistant to show the summary and get the user's explicit go-ahead first. A UI Apply button (section 7) would be a stronger check, since the user's click doesn't pass through the assistant.
+- [ ] Tools: `export_rekordbox_xml(...)`, `plan_serato_cue_write(...)` (creates a pending plan and returns its ID and summary), `apply_plan(plan_id)`, `undo_plan(plan_id)`.
 
-### Polish and quality
+### 6. Polish and quality
 
-- [ ] Adopt Tailwind and shadcn/ui as the README says, or drop them from the README.
-- [ ] Split `RekordboxUploader` into smaller components and hooks, and add a state/data layer.
-- [ ] Fix the TrackTable issues above (sort direction, input focus, stable keys).
-- [ ] Add backend tests (pytest, with sample XML fixtures) and frontend tests.
-- [ ] Add CI and lint, and a one-command dev setup (Makefile or script).
-- [ ] Add Docker or packaging for local-first distribution.
+- [ ] Update the README: what CueBridge is, the MCP setup, example prompts, and a link to this roadmap.
+- [ ] Add CI and lint, and a one-command dev setup.
+- [ ] Pin a Python version.
+- [ ] Packaging for local install (`pipx` or `uvx`), so users can run the server with one command.
+
+### 7. Optional review UI, opened by the MCP server (after the text workflow is complete)
+
+Only start this once sections 1–5 work end to end. Decide then, based on how often the text summaries fall short.
+
+- [ ] Point the FastAPI endpoints at the service layer. They read the same cached library as the MCP tools.
+- [ ] Generate the TypeScript types from the backend's OpenAPI schema (`openapi-typescript`), so `types/cue.ts` stops being a hand-copied duplicate of `models.py`.
+- [ ] Replace upload with session-based views, such as `/review/{plan_id}`, that load a pending comparison or conversion plan from the server.
+- [ ] Side-by-side comparison view: wire up `CueComparison`, and flag missing and mismatched cues.
+- [ ] Track detail view that uses `CueCard`.
+- [ ] Preview-and-apply screen for write operations: shows exactly which files and cues change, with an Apply button that triggers the write. This is the stronger confirmation step, because the user's click doesn't pass through the assistant.
+- [ ] MCP tool `open_review_ui(...)`: starts the web server if it isn't running, and returns the URL (and opens the browser if possible).
+- [ ] Fix the UI bugs listed above (search-box arrow keys, stable row keys, sort direction, API base URL from an env variable).
+- [ ] Bind the server to `127.0.0.1` only, and protect apply actions with a one-time token in the URL, so no other local page or process can trigger a write.
 
 ### Later
 
 - Support other platforms (Traktor NML, Engine DJ).
-- Waveform column (the "Wave" placeholder is `|||`).
+- Cue editing through tools (rename, recolor, move).
 - Batch and multi-library operations.
-- Cue editing in the UI.
+- MCP resources and prompts (for example a "migrate my library" guided prompt).
 
 ## Suggested next step
 
-Fix the search-box arrow-key bug and move the API URL to an env variable. Then decide how to approach Serato, since it's the riskiest unknown.
+Section 1: extract a path-based service layer from `main.py`. It's a small refactor, and the MCP server (and later the web endpoints) depend on it. Then build the read-only Rekordbox tools (section 2), which give a working MCP server before Serato is started. The UI (section 7) waits until the text workflow is complete.
