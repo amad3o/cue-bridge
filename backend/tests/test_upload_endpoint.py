@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from app import main
 from app.main import app
+from app.services import rekordbox_service
 
 client = TestClient(app)
 
@@ -50,7 +51,7 @@ class TestRekordboxUpload:
         response = upload(b"   \n")
 
         assert response.status_code == 400
-        assert "empty" in response.json()["detail"]
+        assert "empty" in response.json()["detail"].lower()
 
     def test_malformed_xml_rejected(self):
         response = upload(b"<DJ_PLAYLISTS><COLLECTION>")
@@ -65,7 +66,7 @@ class TestRekordboxUpload:
         assert "Rekordbox" in response.json()["detail"]
 
     def test_oversized_file_rejected(self, monkeypatch):
-        monkeypatch.setattr(main, "MAX_UPLOAD_BYTES", 10)
+        monkeypatch.setattr(rekordbox_service, "MAX_FILE_BYTES", 10)
 
         response = upload(VALID_XML)
 
