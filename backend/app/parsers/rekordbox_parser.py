@@ -9,6 +9,10 @@ TYPE_CUE = "0"
 TYPE_LOOP = "4"
 
 
+class RekordboxParseError(ValueError):
+    """The XML is well-formed but is not a Rekordbox library export."""
+
+
 def _to_int(value, default=None):
     try:
         return int(value)
@@ -90,7 +94,7 @@ def parse_rekordbox_xml(xml_content: bytes):
     collection = root.find("COLLECTION")
 
     if collection is None:
-        return []
+        raise RekordboxParseError("No <COLLECTION> element found.")
 
     tracks = []
 

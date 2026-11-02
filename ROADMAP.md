@@ -7,7 +7,15 @@
 - `POST /upload/rekordbox` parses Rekordbox XML and returns `filename`, `tracksFound` and the first 100 tracks. Each track has its normalized cues.
 - CORS is set up for the Vite dev server at `localhost:5173`.
 - `POST /upload/serato` accepts a file and returns its size and a 1000-byte text preview. This is a stub. It parses no tracks.
-- Uncommitted cleanup removes the stray duplicate `cues.append` block from `rekordbox_parser.py`. Commit it. Also stop tracking `__pycache__` (`.pyc` files show as modified).
+- Rekordbox parser normalizes cues:
+  - unique IDs built from `TrackID`, cue type, slot and time
+  - hot cue, memory and loop types, with a null `cueIndex` for memory cues
+  - loop end time (`endMs`) and hex color
+  - `filePath` decoded from `Location`
+  - fade and load markers skipped, and bad marks no longer crash the upload
+- pytest suite for the parser and the upload endpoint.
+- Pydantic response models (`app/models.py`) and upload validation: `.xml` only, 100 MB limit, and clear 400/413 errors for empty, malformed or non-Rekordbox files.
+- Root `.gitignore`, and cache files untracked.
 
 **Frontend (React + TS + Vite)**
 
@@ -17,24 +25,25 @@
   - up/down arrow keyboard row selection
   - cue-time summary column
 - Search box and a "only tracks with cues" filter.
-- Shared `NormalizedCue` and `Track` types, plus `formatCueTime`.
+- Shared `NormalizedCue` and `Track` types (updated for `endMs`, `trackId`, `filePath` and nullable `cueIndex`/`color`), plus `formatCueTime`.
+- `CueCard` shows loop end, slot or "Memory", and cue color.
 - Serato upload button that logs the preview and shows a size summary.
 - `CueCard` and `CueComparison` components exist but nothing renders them yet.
 
 ## Issues and bugs
 
-1. **Cue ID collisions.** The ID is `rekordbox-{trackName}-{Num}`, so two tracks with the same title produce duplicate IDs. Use the track's `TrackID` or `Location` instead.
-2. **Rekordbox cue types are all labeled "hotcue".**
+1. ~~**Cue ID collisions.** The ID is `rekordbox-{trackName}-{Num}`, so two tracks with the same title produce duplicate IDs. Use the track's `TrackID` or `Location` instead.~~ Fixed.
+2. ~~**Rekordbox cue types are all labeled "hotcue".**~~ Fixed.
    - In Rekordbox XML, `Num=-1` is a memory cue. `Type` distinguishes cues from loops (`Type=4`, with an `End` attribute).
    - Loops and memory cues are mis-typed, and `End` is ignored.
    - `Num=-1` also gives `cueIndex` -1.
-3. **Cue `color` is always `None`.** The `Red`, `Green` and `Blue` attributes are ignored.
-4. **`filePath` is never populated.** The `Location` attribute is ignored. Without it you can't match tracks between Rekordbox and Serato.
+3. ~~**Cue `color` is always `None`.** The `Red`, `Green` and `Blue` attributes are ignored.~~ Fixed.
+4. ~~**`filePath` is never populated.** The `Location` attribute is ignored. Without it you can't match tracks between Rekordbox and Serato.~~ Fixed.
 5. **API truncates to 100 tracks** (`parsed_tracks[:100]`) with no pagination. Large libraries silently lose data.
 6. **Parser has no error handling.**
-   - Malformed XML raises `ParseError`, which returns a 500.
-   - Missing or non-numeric values raise as well.
-   - There is no upload size or type validation.
+   - ~~Malformed XML raises `ParseError`, which returns a 500.~~ Fixed: returns a 400.
+   - ~~Missing or non-numeric values raise as well.~~ Fixed in the parser.
+   - ~~There is no upload size or type validation.~~ Fixed: `.xml` only, 100 MB max.
    - Missing names default to the string `"Unknown"`, which is indistinguishable from real data.
 7. **The Serato "parser" only decodes bytes as UTF-8.**
    - Serato stores cues in binary `Serato Markers2` / `Markers_` ID3/GEOB tags inside the audio files themselves.
@@ -52,9 +61,8 @@
     - It doesn't mention Serato, the setup steps or how to run the app.
     - It says Pydantic, but no models are defined.
 11. **Housekeeping.**
-    - `.DS_Store` and `__pycache__` are tracked, and there is no root `.gitignore`.
     - `requirements.txt` has no pinned Python version.
-    - There are no tests anywhere.
+    - There are no frontend tests, and no tests for the API endpoints.
     - `RekordboxUploader` handles both uploaders plus filtering, so it's too big.
     - The Serato response type declares `tracks: []`.
 
@@ -63,9 +71,9 @@
 ### Near term: finish the MVP (Rekordbox to UI)
 
 - [x] Commit the parser fix. Add `.gitignore` entries for `__pycache__` and `.DS_Store`, then `git rm --cached` them.
-- [ ] Fix cue IDs, cue types (hot, memory, loop), loop end time, color and file path in the Rekordbox parser.
-- [ ] Add Pydantic response models. This matches what the README promises.
-- [ ] Add error handling and validation for uploads.
+- [x] Fix cue IDs, cue types (hot, memory, loop), loop end time, color and file path in the Rekordbox parser.
+- [x] Add Pydantic response models. This matches what the README promises.
+- [x] Add error handling and validation for uploads.
 - [ ] Add track detail view or expandable rows that use `CueCard`.
 - [ ] Remove the 100-track cap by adding pagination or virtualized rows.
 - [ ] Update the README and add run instructions.
@@ -103,4 +111,4 @@
 
 ## Suggested next step
 
-Fix the Rekordbox parser (IDs, types, color, location). Everything downstream, including matching and export, depends on that normalized data. Then decide how to approach Serato, since it's the riskiest unknown.
+Fix the search-box arrow-key bug and move the API URL to an env variable. Then decide how to approach Serato, since it's the riskiest unknown.

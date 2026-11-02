@@ -3,6 +3,7 @@ import xml.etree.ElementTree as ET
 import pytest
 
 from app.parsers.rekordbox_parser import (
+    RekordboxParseError,
     _parse_color,
     _parse_location,
     parse_rekordbox_xml,
@@ -26,8 +27,12 @@ def parse_single_cue(mark: str) -> dict:
 
 
 class TestTrackParsing:
-    def test_returns_empty_list_without_collection(self):
-        assert parse_rekordbox_xml(b"<DJ_PLAYLISTS></DJ_PLAYLISTS>") == []
+    def test_raises_without_collection(self):
+        with pytest.raises(RekordboxParseError):
+            parse_rekordbox_xml(b"<DJ_PLAYLISTS></DJ_PLAYLISTS>")
+
+    def test_empty_collection_returns_no_tracks(self):
+        assert parse_rekordbox_xml(make_xml()) == []
 
     def test_parses_track_fields(self):
         tracks = parse_rekordbox_xml(
