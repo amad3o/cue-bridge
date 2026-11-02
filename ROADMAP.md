@@ -18,6 +18,7 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
   - fade and load markers skipped, and bad marks no longer crash the parse
 - Pydantic models (`cuebridge/models.py`): `Cue`, `Track`.
 - Path-based service layer (`cuebridge/services/rekordbox_service.py`) with validation, domain errors, and an mtime-based library cache. The HTTP endpoints call it, and so will the MCP server.
+- Missing or blank titles, artists and cue names are `None`, not placeholder text. The UI chooses what to show.
 - `RekordboxParseError` for XML that isn't a Rekordbox export.
 - pytest suite for the parser and the upload endpoint.
 - Root `.gitignore`, and cache files untracked.

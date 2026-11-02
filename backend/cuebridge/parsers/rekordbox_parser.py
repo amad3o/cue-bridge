@@ -88,7 +88,7 @@ def _parse_cue(mark, track_id, track_name, artist, file_path):
         "artist": artist,
         "filePath": file_path,
         "cueIndex": None if is_memory else num,
-        "cueName": mark.attrib.get("Name") or "Unnamed cue",
+        "cueName": _text(mark.attrib.get("Name")),
         "timeMs": time_ms,
         "endMs": _seconds_to_ms(mark.attrib.get("End")) if mark_type == TYPE_LOOP else None,
         "color": _parse_color(mark.attrib),

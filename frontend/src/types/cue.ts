@@ -8,7 +8,8 @@ export type NormalizedCue = {
   filePath: string | null;
   // Hot cue / hot loop slot. null for memory cues and memory loops.
   cueIndex: number | null;
-  cueName?: string;
+  // null when the cue has no name in the source file.
+  cueName: string | null;
   timeMs: number;
   // Loop end time. null for anything that isn't a loop.
   endMs: number | null;

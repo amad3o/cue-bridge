@@ -128,10 +128,16 @@ class TestCueTypes:
 
         assert tracks[0]["cues"] == []
 
-    def test_unnamed_cue_gets_placeholder_name(self):
-        cue = parse_single_cue('<POSITION_MARK Type="0" Start="1" Num="0"/>')
-
-        assert cue["cueName"] == "Unnamed cue"
+    @pytest.mark.parametrize(
+        "mark",
+        [
+            '<POSITION_MARK Type="0" Start="1" Num="0"/>',
+            '<POSITION_MARK Name="" Type="0" Start="1" Num="0"/>',
+            '<POSITION_MARK Name="  " Type="0" Start="1" Num="0"/>',
+        ],
+    )
+    def test_unnamed_cue_has_no_name(self, mark):
+        assert parse_single_cue(mark)["cueName"] is None
 
 
 class TestCueIds:

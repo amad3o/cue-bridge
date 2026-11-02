@@ -43,7 +43,7 @@ def test_memory_cues(tracks):
 
     assert [c.timeMs for c in memory] == [0, 67043]
     assert all(c.cueIndex is None and c.color is None for c in memory)
-    assert all(c.cueName == "Unnamed cue" for c in memory)
+    assert all(c.cueName is None for c in memory)
 
 
 def test_cue_at_zero_is_kept(tracks):

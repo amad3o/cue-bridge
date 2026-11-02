@@ -14,7 +14,7 @@ export default function CueCard({ cue }: Props) {
         marginTop: "0.5rem",
       }}
     >
-      <strong>{cue.cueName}</strong>
+      <strong>{cue.cueName ?? "Unnamed cue"}</strong>
       <p>
         Time: {formatCueTime(cue.timeMs)}
         {cue.endMs !== null && ` → ${formatCueTime(cue.endMs)}`}
