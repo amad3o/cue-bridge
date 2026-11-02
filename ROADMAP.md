@@ -45,10 +45,10 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 
 ### 1. Restructure the core for reuse
 
-- [ ] Move logic out of `main.py` into a service layer that takes **file paths** (not uploads) and returns models. The HTTP endpoints and the MCP server both call it.
+- [x] Move logic out of `main.py` into a service layer that takes **file paths** (not uploads) and returns models. The HTTP endpoints and the MCP server both call it.
 - [ ] Move shared models out of the web layer, and decide on a package layout (for example `cuebridge/` with `parsers/`, `models.py` and `services/`).
-- [ ] Make "unknown" explicit: use `None` for missing title or artist, not the string `"Unknown"`.
-- [ ] Add a library cache so a large XML is parsed once per session, not on every tool call.
+- [x] Make "unknown" explicit: use `None` for missing title or artist, not the string `"Unknown"`.
+- [x] Add a library cache so a large XML is parsed once per session, not on every tool call. `get_rekordbox_library(path)` keys on the resolved path, re-parses when the file's mtime or size changes, and keeps the last 4 libraries.
 
 ### 2. MCP server, read-only (Rekordbox)
 
