@@ -51,6 +51,8 @@ export default function RekordboxUploader() {
     try {
       const data = await uploadSeratoFile(seratoFile);
 
+      console.log(data.preview);
+
       setSeratoSummary(`${data.message}. File size: ${data.size_bytes} bytes`);
     } catch (error) {
       console.error("Failed to upload Serato file:", error);

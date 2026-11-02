@@ -1,6 +1,7 @@
 type UploadSeratoResponse = {
   message: string;
   size_bytes: number;
+  preview: string;
   tracks: [];
 };
 
