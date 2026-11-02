@@ -34,17 +34,4 @@ def parse_rekordbox_xml(xml_content: bytes):
             "artist": artist,
             "cues": cues,
         })
-
-    cues.append({
-        "id": f"rekordbox-{track_name}-{cue.attrib.get('Num', '0')}",
-        "source": "rekordbox",
-        "trackTitle": track_name,
-        "artist": artist,
-        "cueIndex": int(cue.attrib.get("Num", 0)),
-        "cueName": cue.attrib.get("Name") or "Unnamed cue",
-        "timeMs": int(float(cue.attrib.get("Start", 0)) * 1000),
-        "color": None,
-        "cueType": "hotcue",
-    })
-
     return tracks
