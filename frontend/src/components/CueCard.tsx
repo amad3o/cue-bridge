@@ -9,14 +9,18 @@ export default function CueCard({ cue }: Props) {
     <div
       style={{
         border: "1px solid #ccc",
+        borderLeft: cue.color ? `6px solid ${cue.color}` : "1px solid #ccc",
         padding: "0.75rem",
         marginTop: "0.5rem",
       }}
     >
       <strong>{cue.cueName}</strong>
-      <p>Time: {formatCueTime(cue.timeMs)}</p>
+      <p>
+        Time: {formatCueTime(cue.timeMs)}
+        {cue.endMs !== null && ` → ${formatCueTime(cue.endMs)}`}
+      </p>
       <p>Type: {cue.cueType}</p>
-      <p>Index: {cue.cueIndex}</p>
+      <p>Slot: {cue.cueIndex !== null ? cue.cueIndex + 1 : "Memory"}</p>
     </div>
   );
 }
