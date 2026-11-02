@@ -14,11 +14,11 @@ export default function TrackTable({ tracks }: Props) {
   const sortedTracks = useMemo(() => {
     return [...tracks].sort((a, b) => {
       if (sortBy === "title") {
-        return a.trackTitle.localeCompare(b.trackTitle);
+        return (a.trackTitle ?? "").localeCompare(b.trackTitle ?? "");
       }
 
       if (sortBy === "artist") {
-        return a.artist.localeCompare(b.artist);
+        return (a.artist ?? "").localeCompare(b.artist ?? "");
       }
 
       return b.cues.length - a.cues.length;
@@ -93,7 +93,7 @@ export default function TrackTable({ tracks }: Props) {
 
         return (
           <div
-            key={`${track.trackTitle}-${index}`}
+            key={track.trackId}
             onClick={() => setSelectedIndex(index)}
             style={{
               display: "grid",
@@ -116,7 +116,7 @@ export default function TrackTable({ tracks }: Props) {
                 minWidth: 0,
               }}
             >
-              {track.trackTitle}
+              {track.trackTitle || "Untitled"}
             </div>
 
             <div

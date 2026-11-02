@@ -46,12 +46,38 @@ class TestTrackParsing:
         assert tracks[0]["filePath"] == "/Users/me/song.mp3"
         assert tracks[0]["cues"] == []
 
-    def test_missing_name_and_artist_default_to_unknown(self):
+    def test_missing_name_and_artist_are_none(self):
         tracks = parse_rekordbox_xml(make_xml('<TRACK TrackID="9"/>'))
 
-        assert tracks[0]["trackTitle"] == "Unknown"
-        assert tracks[0]["artist"] == "Unknown"
+        assert tracks[0]["trackTitle"] is None
+        assert tracks[0]["artist"] is None
         assert tracks[0]["filePath"] is None
+
+    @pytest.mark.parametrize("value", ["", "   "])
+    def test_blank_name_and_artist_are_none(self, value):
+        # Rekordbox writes Artist="" for tracks with no artist tag.
+        tracks = parse_rekordbox_xml(make_xml(make_track(Name=value, Artist=value)))
+
+        assert tracks[0]["trackTitle"] is None
+        assert tracks[0]["artist"] is None
+
+    def test_missing_artist_and_title_are_none_on_cues(self):
+        tracks = parse_rekordbox_xml(
+            make_xml(
+                make_track(
+                    '<POSITION_MARK Type="0" Start="1" Num="0"/>', Name="", Artist=""
+                )
+            )
+        )
+
+        assert tracks[0]["cues"][0]["trackTitle"] is None
+        assert tracks[0]["cues"][0]["artist"] is None
+
+    def test_surrounding_whitespace_is_stripped(self):
+        tracks = parse_rekordbox_xml(make_xml(make_track(Name=" Song ", Artist=" A ")))
+
+        assert tracks[0]["trackTitle"] == "Song"
+        assert tracks[0]["artist"] == "A"
 
     def test_missing_track_id_falls_back_to_position(self):
         tracks = parse_rekordbox_xml(make_xml("<TRACK/><TRACK/>"))

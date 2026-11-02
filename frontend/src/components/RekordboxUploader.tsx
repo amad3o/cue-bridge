@@ -71,7 +71,7 @@ export default function RekordboxUploader() {
   };
 
   const filteredTracks = tracks.filter((track) => {
-    const matchesSearch = `${track.trackTitle} ${track.artist}`
+    const matchesSearch = `${track.trackTitle ?? ""} ${track.artist ?? ""}`
       .toLowerCase()
       .includes(searchQuery.toLowerCase());
 

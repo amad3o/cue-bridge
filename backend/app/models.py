@@ -8,7 +8,7 @@ CueType = Literal["hotcue", "memory", "loop"]
 class Cue(BaseModel):
     id: str
     source: Literal["rekordbox", "serato"]
-    trackTitle: str
+    trackTitle: str | None = None
     artist: str | None = None
     filePath: str | None = None
     # Hot cue / hot loop slot. None for memory cues and memory loops.
@@ -24,8 +24,8 @@ class Cue(BaseModel):
 
 class Track(BaseModel):
     trackId: str
-    trackTitle: str
-    artist: str
+    trackTitle: str | None = None
+    artist: str | None = None
     filePath: str | None = None
     cues: list[Cue]
 

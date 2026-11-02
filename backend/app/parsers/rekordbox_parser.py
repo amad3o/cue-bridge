@@ -20,6 +20,14 @@ def _to_int(value, default=None):
         return default
 
 
+def _text(value):
+    """Return stripped text, or None when the attribute is missing or blank."""
+    if value is None:
+        return None
+
+    return value.strip() or None
+
+
 def _seconds_to_ms(value):
     try:
         return int(float(value) * 1000)
@@ -100,8 +108,8 @@ def parse_rekordbox_xml(xml_content: bytes):
 
     for position, track in enumerate(collection.findall("TRACK")):
         track_id = track.attrib.get("TrackID") or f"idx{position}"
-        track_name = track.attrib.get("Name", "Unknown")
-        artist = track.attrib.get("Artist", "Unknown")
+        track_name = _text(track.attrib.get("Name"))
+        artist = _text(track.attrib.get("Artist"))
         file_path = _parse_location(track.attrib.get("Location"))
 
         cues = []

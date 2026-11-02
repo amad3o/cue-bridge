@@ -3,8 +3,8 @@ export type CueType = "hotcue" | "memory" | "loop";
 export type NormalizedCue = {
   id: string;
   source: "rekordbox" | "serato";
-  trackTitle: string;
-  artist?: string;
+  trackTitle: string | null;
+  artist: string | null;
   filePath: string | null;
   // Hot cue / hot loop slot. null for memory cues and memory loops.
   cueIndex: number | null;
@@ -19,8 +19,9 @@ export type NormalizedCue = {
 
 export type Track = {
   trackId: string;
-  trackTitle: string;
-  artist: string;
+  // null when the source file has no title or artist (not the text "Unknown").
+  trackTitle: string | null;
+  artist: string | null;
   filePath: string | null;
   cues: NormalizedCue[];
 };
