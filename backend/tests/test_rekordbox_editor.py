@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -123,69 +124,312 @@ class TestPlan:
         assert len(tracks_by_id(plan.xml)["idx0"].cues) == 1
 
 
-class TestWrite:
-    def test_default_output_path(self, source):
+class TestHotCueDuplication:
+    def test_plan_counts(self, source):
+        plan = editor.build_hot_cue_duplication_plan(source)
+
+        # Track 2001: memory cues at 0:00 and 1:07 take free slots B and D
+        # (A holds a hot cue, C a hot loop). Tracks 3001 and 3002: slot A each.
+        assert plan.changed_track_ids == ("2001", "3001", "3002")
+        assert plan.cues_added == 4
+        assert plan.already_duplicated == 0
+        assert plan.overflow == ()
+
+    def test_memory_cues_are_kept_and_hot_cues_added(self, source):
+        before = tracks_by_id(source.read_bytes())
+        after = tracks_by_id(editor.build_hot_cue_duplication_plan(source).xml)
+
+        for track_id in ("2001", "3001", "3002"):
+            assert after[track_id].cues[: len(before[track_id].cues)] == before[track_id].cues
+
+        new = after["2001"].cues[len(before["2001"].cues) :]
+        assert sorted((c.cueIndex, c.timeMs, c.cueType) for c in new) == [
+            (1, 0, "hotcue"), (3, 67043, "hotcue"),
+        ]
+
+    def test_other_tracks_are_unchanged(self, source):
+        before = tracks_by_id(source.read_bytes())
+        after = tracks_by_id(editor.build_hot_cue_duplication_plan(source).xml)
+
+        for track_id in ("1001", "4001", "5001"):
+            assert after[track_id] == before[track_id]
+
+    def test_cue_names_are_copied(self, tmp_path):
+        path = tmp_path / "rb.xml"
+        path.write_bytes(
+            b'<DJ_PLAYLISTS><COLLECTION><TRACK TrackID="1" Name="A">'
+            b'<POSITION_MARK Name="Intro" Type="0" Start="1.5" Num="-1"/>'
+            b"</TRACK></COLLECTION></DJ_PLAYLISTS>"
+        )
+
+        cues = tracks_by_id(editor.build_hot_cue_duplication_plan(path).xml)["1"].cues
+
+        assert [(c.cueType, c.cueName, c.timeMs) for c in cues] == [
+            ("memory", "Intro", 1500), ("hotcue", "Intro", 1500),
+        ]
+
+    def test_running_on_the_result_changes_nothing(self, source, tmp_path):
+        first = editor.build_hot_cue_duplication_plan(source)
+        copy = tmp_path / "copy.xml"
+        copy.write_bytes(first.xml)
+
+        second = editor.build_hot_cue_duplication_plan(copy)
+
+        assert second.changed_track_ids == () and second.cues_added == 0
+        assert second.already_duplicated == 4
+
+    def test_overflow_is_reported_per_track(self, tmp_path):
+        marks = "".join(f'<POSITION_MARK Type="0" Start="{i + 1}" Num="-1"/>' for i in range(10))
+        path = tmp_path / "rb.xml"
+        path.write_bytes(
+            f'<DJ_PLAYLISTS><COLLECTION><TRACK TrackID="7" Name="A">{marks}</TRACK>'
+            "</COLLECTION></DJ_PLAYLISTS>".encode()
+        )
+
+        plan = editor.build_hot_cue_duplication_plan(path)
+
+        assert plan.cues_added == 8 and plan.overflow == (("7", 2),)
+
+    def test_source_file_is_not_modified(self, source):
+        original = source.read_bytes()
+
+        editor.build_hot_cue_duplication_plan(source)
+
+        assert source.read_bytes() == original
+
+
+def backups_of(path: Path) -> list[Path]:
+    return sorted(path.parent.glob(f"{path.name}.backup-*"))
+
+
+def cuebridge_files_in(folder: Path) -> list[str]:
+    return sorted(p.name for p in folder.iterdir())
+
+
+class TestInPlace:
+    def test_edits_the_file_itself(self, source):
+        result = editor.write_plan(editor.build_default_cue_plan(source))
+
+        assert result.path == source.resolve()
+        assert len(tracks_by_id(source.read_bytes())["1001"].cues) == 1
+
+    def test_first_edit_of_a_fresh_export_saves_a_verified_backup(self, source):
+        original = source.read_bytes()
+
+        result = editor.write_plan(editor.build_default_cue_plan(source))
+
+        assert result.backup is not None
+        assert result.backup.read_bytes() == original
+        assert result.backup.name.startswith("rekordbox.xml.backup-")
+        assert not result.backup.name.endswith(".xml")
+        assert backups_of(source) == [result.backup]
+
+    def test_plan_reports_whether_a_backup_will_be_made(self, source):
+        assert editor.needs_backup(editor.build_default_cue_plan(source)) is True
+
+        editor.write_plan(editor.build_default_cue_plan(source))
+
+        assert editor.needs_backup(editor.build_hot_cue_duplication_plan(source)) is False
+
+    def test_later_edits_of_an_already_edited_file_make_no_more_backups(self, source):
+        editor.write_plan(editor.build_default_cue_plan(source))
+        second = editor.write_plan(editor.build_hot_cue_duplication_plan(source))
+
+        assert second.backup is None
+        assert len(backups_of(source)) == 1
+
+    def test_a_new_export_from_rekordbox_is_backed_up_again(self, source):
+        editor.write_plan(editor.build_default_cue_plan(source))
+        source.write_bytes(FIXTURE.read_bytes())  # Rekordbox re-exported over it
+
+        result = editor.write_plan(editor.build_hot_cue_duplication_plan(source))
+
+        assert result.backup is not None
+        assert len(backups_of(source)) == 2
+
+    def test_two_backups_in_one_second_do_not_collide(self, source, monkeypatch):
+        class Frozen:
+            @staticmethod
+            def now():
+                from datetime import datetime
+                return datetime(2026, 1, 2, 3, 4, 5)
+
+        monkeypatch.setattr(editor, "datetime", Frozen)
+
+        editor.write_plan(editor.build_default_cue_plan(source))
+        source.write_bytes(FIXTURE.read_bytes())
+        editor.write_plan(editor.build_default_cue_plan(source))
+
+        assert [b.name for b in backups_of(source)] == [
+            "rekordbox.xml.backup-20260102-030405",
+            "rekordbox.xml.backup-20260102-030405-1",
+        ]
+
+    def test_edits_add_up_in_the_same_file(self, source):
+        editor.write_plan(editor.build_default_cue_plan(source))
+        editor.write_plan(editor.build_hot_cue_duplication_plan(source))
+
+        cues = {t: c.cues for t, c in tracks_by_id(source.read_bytes()).items()}
+
+        for track_id in ("1001", "4001", "5001"):
+            assert [(c.cueType, c.cueIndex, c.timeMs) for c in cues[track_id]] == [("hotcue", 0, 0)]
+        assert sorted(c.cueIndex for c in cues["2001"] if c.cueType == "hotcue") == [0, 1, 3]
+        assert sorted(c.cueIndex for c in cues["3001"] if c.cueType == "hotcue") == [0]
+
+    def test_order_does_not_matter(self, source, tmp_path):
+        other = tmp_path / "other"
+        other.mkdir()
+        second = other / "rekordbox.xml"
+        second.write_bytes(source.read_bytes())
+
+        editor.write_plan(editor.build_default_cue_plan(source))
+        editor.write_plan(editor.build_hot_cue_duplication_plan(source))
+        editor.write_plan(editor.build_hot_cue_duplication_plan(second))
+        editor.write_plan(editor.build_default_cue_plan(second))
+
+        assert tracks_by_id(source.read_bytes()) == tracks_by_id(second.read_bytes())
+
+    def test_repeating_either_edit_changes_nothing(self, source):
+        editor.write_plan(editor.build_default_cue_plan(source))
+        editor.write_plan(editor.build_hot_cue_duplication_plan(source))
+
+        assert editor.build_default_cue_plan(source).changed_track_ids == ()
+        assert editor.build_hot_cue_duplication_plan(source).changed_track_ids == ()
+
+    def test_marker_appears_once_after_repeated_edits(self, source):
+        editor.write_plan(editor.build_default_cue_plan(source))
+        editor.write_plan(editor.build_hot_cue_duplication_plan(source))
+
+        assert source.read_bytes()[:300].count(editor.EDIT_MARKER) == 1
+
+    def test_file_permissions_are_kept(self, source):
+        source.chmod(0o640)
+
+        editor.write_plan(editor.build_default_cue_plan(source))
+
+        assert source.stat().st_mode & 0o777 == 0o640
+
+    def test_no_temp_files_are_left_behind(self, source):
+        editor.write_plan(editor.build_default_cue_plan(source))
+
+        assert [n for n in cuebridge_files_in(source.parent) if n.startswith(".")] == []
+
+    def test_planning_alone_never_touches_the_file_or_makes_a_backup(self, source):
+        original = source.read_bytes()
+        mtime = source.stat().st_mtime_ns
+
+        editor.build_default_cue_plan(source)
+        editor.build_hot_cue_duplication_plan(source)
+
+        assert source.read_bytes() == original and source.stat().st_mtime_ns == mtime
+        assert backups_of(source) == []
+
+
+class TestStalePlans:
+    def test_refuses_if_the_file_changed_after_planning(self, source):
         plan = editor.build_default_cue_plan(source)
+        changed = source.read_bytes() + b"\n"
+        source.write_bytes(changed)
 
-        written = editor.write_plan(plan)
+        with pytest.raises(OutputPathError, match="changed since"):
+            editor.write_plan(plan)
 
-        assert written == source.with_name("rekordbox.with-default-cues.xml")
-        assert written.read_bytes() == plan.xml
+        assert source.read_bytes() == changed
+        assert backups_of(source) == []
 
-    def test_custom_output_path(self, source, tmp_path):
+    def test_refuses_if_only_the_modification_time_changed(self, source):
         plan = editor.build_default_cue_plan(source)
+        os.utime(source, (1, 1))
 
-        written = editor.write_plan(plan, tmp_path / "custom.xml")
+        with pytest.raises(OutputPathError, match="changed since"):
+            editor.write_plan(plan)
 
-        assert written.exists()
-
-    def test_written_file_loads_as_a_library(self, source):
-        written = editor.write_plan(editor.build_default_cue_plan(source))
-
-        assert len(tracks_by_id(written.read_bytes())["1001"].cues) == 1
-
-    def test_never_overwrites_an_existing_file(self, source, tmp_path):
+    def test_a_plan_cannot_be_applied_twice(self, source):
         plan = editor.build_default_cue_plan(source)
+        editor.write_plan(plan)
+
+        with pytest.raises(OutputPathError, match="changed since"):
+            editor.write_plan(plan)
+
+
+class TestSaveElsewhere:
+    def test_leaves_the_loaded_file_alone(self, source, tmp_path):
+        original = source.read_bytes()
+
+        plan = editor.build_default_cue_plan(source, output_path=tmp_path / "copy.xml")
+        result = editor.write_plan(plan)
+
+        assert result.path == (tmp_path / "copy.xml").resolve() and result.backup is None
+        assert source.read_bytes() == original
+        assert backups_of(source) == []
+        assert not plan.target.in_place
+
+    def test_written_copy_loads_as_a_library(self, source, tmp_path):
+        editor.write_plan(editor.build_default_cue_plan(source, output_path=tmp_path / "copy.xml"))
+
+        assert len(tracks_by_id((tmp_path / "copy.xml").read_bytes())["1001"].cues) == 1
+
+    def test_refuses_a_file_it_did_not_write(self, source, tmp_path):
         existing = tmp_path / "existing.xml"
         existing.write_bytes(b"precious")
 
-        with pytest.raises(OutputPathError, match="already exists"):
-            editor.write_plan(plan, existing)
+        with pytest.raises(OutputPathError, match="wasn't written by CueBridge"):
+            editor.build_default_cue_plan(source, output_path=existing)
 
         assert existing.read_bytes() == b"precious"
 
-    def test_second_write_to_default_path_is_refused(self, source):
-        plan = editor.build_default_cue_plan(source)
-        editor.write_plan(plan)
+    def test_replaces_a_copy_that_it_wrote(self, source, tmp_path):
+        target = tmp_path / "copy.xml"
+        editor.write_plan(editor.build_default_cue_plan(source, output_path=target))
+        second = editor.build_hot_cue_duplication_plan(source, output_path=target)
+
+        editor.write_plan(second)
+
+        assert target.read_bytes() == second.xml
+
+    def test_refuses_a_file_that_appears_after_planning(self, source, tmp_path):
+        target = tmp_path / "copy.xml"
+        plan = editor.build_default_cue_plan(source, output_path=target)
+        target.write_bytes(b"precious")
 
         with pytest.raises(OutputPathError, match="already exists"):
             editor.write_plan(plan)
 
-    def test_cannot_overwrite_the_source(self, source):
-        original = source.read_bytes()
-        plan = editor.build_default_cue_plan(source)
+        assert target.read_bytes() == b"precious"
 
-        with pytest.raises(OutputPathError, match="original"):
-            editor.write_plan(plan, source)
+    def test_refuses_a_copy_that_is_replaced_after_planning(self, source, tmp_path):
+        target = tmp_path / "copy.xml"
+        editor.write_plan(editor.build_default_cue_plan(source, output_path=target))
+        plan = editor.build_hot_cue_duplication_plan(source, output_path=target)
+        target.write_bytes(b"replaced by someone else")
 
-        assert source.read_bytes() == original
+        with pytest.raises(OutputPathError, match="wasn't written by CueBridge"):
+            editor.write_plan(plan)
 
-    def test_cannot_overwrite_the_source_through_a_symlink(self, source, tmp_path):
-        link = tmp_path / "link.xml"
-        link.symlink_to(source)
-        plan = editor.build_default_cue_plan(source)
+        assert target.read_bytes() == b"replaced by someone else"
 
-        with pytest.raises(OutputPathError, match="original"):
-            editor.write_plan(plan, link)
+    def test_refuses_a_folder(self, source, tmp_path):
+        folder = tmp_path / "folder.xml"
+        folder.mkdir()
+
+        with pytest.raises(OutputPathError, match="wasn't written by CueBridge"):
+            editor.build_default_cue_plan(source, output_path=folder)
 
     def test_output_must_be_xml(self, source, tmp_path):
-        plan = editor.build_default_cue_plan(source)
-
         with pytest.raises(OutputPathError, match=".xml"):
-            editor.write_plan(plan, tmp_path / "out.txt")
+            editor.build_default_cue_plan(source, output_path=tmp_path / "out.txt")
 
     def test_missing_folder(self, source, tmp_path):
-        plan = editor.build_default_cue_plan(source)
-
         with pytest.raises(OutputPathError, match="does not exist"):
-            editor.write_plan(plan, tmp_path / "nope" / "out.xml")
+            editor.build_default_cue_plan(source, output_path=tmp_path / "nope" / "out.xml")
+
+    def test_naming_the_source_as_the_output_is_the_same_as_in_place(self, source):
+        plan = editor.build_default_cue_plan(source, output_path=source)
+
+        assert plan.target.in_place
+
+    def test_naming_the_source_through_a_symlink_is_also_in_place(self, source, tmp_path):
+        link = tmp_path / "link.xml"
+        link.symlink_to(source)
+
+        assert editor.build_default_cue_plan(source, output_path=link).target.in_place

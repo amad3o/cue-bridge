@@ -50,18 +50,26 @@ Start a new session (or run `/mcp`) and `cuebridge` should show as connected. Th
 | `search_tracks(query, has_cues, limit, offset)` | Lists tracks a page at a time. `query` words must all appear in the title, artist or file name. |
 | `get_track_cues(track_id)` | One track with all its cues: type, pad slot, name, time, loop end and color. |
 | `find_tracks_without_cues(limit, offset)` | Tracks that have no cues. |
-| `set_default_cue(output_path, dry_run=True)` | Adds a hot cue A at 0:00 to every track with no cue or loop, in a **new copy** of the XML. |
+| `set_default_cue(output_path, dry_run=True)` | Adds a hot cue A at 0:00 to every track with no cue or loop, in the loaded XML file (a backup is saved first). |
+| `duplicate_memory_cues_to_hot_cues(output_path, dry_run=True)` | Copies every memory cue to a hot cue at the same position, in the lowest free slots (A-H), in the loaded XML file. Memory cues are kept. A memory cue that already has a hot cue at the same time is skipped, so running it twice changes nothing. Cues beyond 8 are reported and not copied. |
 
 Results are paged (at most 100 per call) so large libraries don't flood the assistant's context.
 
-### Safety of `set_default_cue`
+### Safety of the writing tools (`set_default_cue`, `duplicate_memory_cues_to_hot_cues`)
 
-- It never modifies your library file. It writes a new file, by default next to the original as `rekordbox.with-default-cues.xml`.
-- It refuses to overwrite any existing file, including the original.
-- `dry_run` is on by default. It reports how many tracks would change and writes nothing.
-- Before writing, it re-parses its own output and stops if any track other than the intended ones changed.
+These two tools **edit your `rekordbox.xml` in place**. That file is an export, and Rekordbox itself is unaffected, but you can lose cues you added to it. So:
 
-Back up your Rekordbox library before importing an edited file. How Rekordbox treats cues on tracks already in your collection when it imports an XML hasn't been tested yet.
+- **Dry run by default.** With `dry_run=true` they report what would change and whether a backup would be made, and write nothing. Ask the assistant to show you that first.
+- **Backup first.** The first edit to a file that came from Rekordbox saves a timestamped copy next to it (`rekordbox.xml.backup-20261103-121017`) and checks it is identical. Edited files carry a marker comment (`<!-- Edited by CueBridge. -->`), so later edits to the same file don't pile up more backups. A fresh export from Rekordbox is backed up again.
+- **Atomic write.** The new XML goes to a temporary file that is swapped in, and file permissions are kept. An interrupted write can't leave a half-written file.
+- **Refuses stale plans.** If the file changed between planning and writing, for example because you re-exported from Rekordbox, nothing is written.
+- **Verified before saving.** The tools re-parse their own output and stop if anything other than the intended cues changed.
+- **Repeatable.** Running a tool twice changes nothing the second time, and the two tools can be run in either order, so their edits add up in the same file.
+- **Optional copy.** Pass `output_path` (ending in `.xml`) to save the edited XML elsewhere and leave the loaded file alone. CueBridge only ever replaces a file at that path if it wrote it.
+
+To undo an edit, copy the backup back over `rekordbox.xml`.
+
+Back up your Rekordbox library before importing an edited file. How Rekordbox treats cues on tracks already in your collection when it imports an XML hasn't been tested yet, so the edited file is only proven to be valid XML that CueBridge itself reads back correctly.
 
 ## Example prompts
 
