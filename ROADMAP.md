@@ -36,7 +36,7 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 2. **Missing names default to the string `"Unknown"`**, which is indistinguishable from real data.
 3. **Large libraries need a plan for AI output.** Returning every track would flood the assistant's context. Tools need summaries, filters and pagination. The legacy API's silent 100-track cap is not a model to copy.
 4. **No tests for Serato yet,** and no sample Serato fixtures.
-5. **README is out of date.** It lists Tailwind and shadcn/ui, which aren't installed, and has no setup or run instructions.
+5. ~~**README is out of date.** It lists Tailwind and shadcn/ui, which aren't installed, and has no setup or run instructions.~~ Fixed: rewritten around the MCP server, with setup, registration and tool docs.
 6. **Housekeeping.** `requirements.txt` has no pinned Python version, and a `.DS_Store` may still be tracked.
 7. **UI bugs to fix when the UI is revived (section 7).**
    - The arrow-key listener is global, so it fires while typing in the search box.
@@ -70,7 +70,7 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
   - `find_tracks_without_cues()` and basic library stats.
   - `set_default_cue(output_path, dry_run=True)`: adds a hot cue A at 0:00 to every track with no cue or loop, in a **new copy** of the XML. It never modifies the original, refuses to overwrite any file, and re-parses its own output to check that only the intended tracks changed. This is the first write tool. Because it only creates a new file, it uses a simple `dry_run` flag. The plan/apply/undo design in section 5 is still needed for edits to audio-file tags.
 - [x] Clear tool descriptions and error messages that tell the assistant what to do next (for example "load a library first").
-- [ ] Document how to register the server in Claude Desktop and Claude Code.
+- [x] Document how to register the server in Claude Code (in the README). The Claude Desktop config is described but untested.
 - [x] Tests that call the tool functions directly with sample fixtures, and through the MCP protocol with an in-memory client.
 - [ ] Open question: confirm how Rekordbox treats cues on tracks already in the collection when it imports an XML. `set_default_cue` writes a valid file, but it hasn't been tested by importing it into Rekordbox.
 - [ ] Optional filters for `set_default_cue`, such as skipping very short tracks. A real export includes Pioneer sampler one-shots (`NOISE`, `SINEWAVE`), which get a cue too.
@@ -105,7 +105,7 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 
 ### 6. Polish and quality
 
-- [ ] Update the README: what CueBridge is, the MCP setup, example prompts, and a link to this roadmap.
+- [x] Update the README: what CueBridge is, the MCP setup, example prompts, and a link to this roadmap. Keep it current as tools are added.
 - [ ] Add CI and lint, and a one-command dev setup.
 - [ ] Pin a Python version.
 - [ ] Packaging for local install (`pipx` or `uvx`), so users can run the server with one command.
