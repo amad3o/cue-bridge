@@ -68,9 +68,12 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
   - `search_tracks(query, has_cues, limit, offset)`: filter and page through tracks.
   - `get_track_cues(track_id)`: full cue detail for one track.
   - `find_tracks_without_cues()` and basic library stats.
+  - `set_default_cue(output_path, dry_run=True)`: adds a hot cue A at 0:00 to every track with no cue or loop, in a **new copy** of the XML. It never modifies the original, refuses to overwrite any file, and re-parses its own output to check that only the intended tracks changed. This is the first write tool. Because it only creates a new file, it uses a simple `dry_run` flag. The plan/apply/undo design in section 5 is still needed for edits to audio-file tags.
 - [x] Clear tool descriptions and error messages that tell the assistant what to do next (for example "load a library first").
 - [ ] Document how to register the server in Claude Desktop and Claude Code.
 - [x] Tests that call the tool functions directly with sample fixtures, and through the MCP protocol with an in-memory client.
+- [ ] Open question: confirm how Rekordbox treats cues on tracks already in the collection when it imports an XML. `set_default_cue` writes a valid file, but it hasn't been tested by importing it into Rekordbox.
+- [ ] Optional filters for `set_default_cue`, such as skipping very short tracks. A real export includes Pioneer sampler one-shots (`NOISE`, `SINEWAVE`), which get a cue too.
 
 ### 3. Serato support (the riskiest part)
 
@@ -130,4 +133,4 @@ Only start this once sections 1–5 work end to end. Decide then, based on how o
 
 ## Suggested next step
 
-Section 2 is built apart from registering the server in Claude. Do that and try the tools on a real library. Then start Serato (section 3), the riskiest part. The UI (section 7) waits until the text workflow is complete.
+Section 2 is built apart from registering the server in Claude. Do that and try the tools on a real library, including the open question about importing the edited XML back into Rekordbox. Then start Serato (section 3), the riskiest part. The UI (section 7) waits until the text workflow is complete.

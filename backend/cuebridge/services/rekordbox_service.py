@@ -71,8 +71,8 @@ def parse_rekordbox_bytes(contents: bytes, filename: str | None = None) -> list[
     return [Track(**track) for track in parsed]
 
 
-def parse_rekordbox_file(path: str | Path) -> list[Track]:
-    """Validate and parse a Rekordbox XML export on disk."""
+def read_library_bytes(path: str | Path) -> bytes:
+    """Read a Rekordbox XML file from disk, checking name, existence and size."""
     file_path = Path(path).expanduser()
 
     _check_filename(file_path.name)
@@ -83,11 +83,14 @@ def parse_rekordbox_file(path: str | Path) -> list[Track]:
     check_size(file_path.stat().st_size)
 
     try:
-        contents = file_path.read_bytes()
+        return file_path.read_bytes()
     except OSError as error:
         raise InvalidFileError(f"Could not read {file_path}: {error.strerror}") from None
 
-    return parse_rekordbox_bytes(contents)
+
+def parse_rekordbox_file(path: str | Path) -> list[Track]:
+    """Validate and parse a Rekordbox XML export on disk."""
+    return parse_rekordbox_bytes(read_library_bytes(path))
 
 
 @dataclass(frozen=True)

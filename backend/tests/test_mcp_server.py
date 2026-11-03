@@ -47,12 +47,17 @@ class TestRegistration:
             "search_tracks",
             "get_track_cues",
             "find_tracks_without_cues",
+            "set_default_cue",
         }
 
-    def test_all_tools_are_marked_read_only(self):
-        tools = asyncio.run(server.mcp.list_tools())
+    def test_only_set_default_cue_is_marked_as_writing(self):
+        tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
 
-        assert all(t.annotations.read_only_hint is True for t in tools)
+        assert tools["set_default_cue"].annotations.read_only_hint is False
+        assert tools["set_default_cue"].annotations.destructive_hint is False
+
+        for name in ("load_rekordbox_library", "search_tracks", "get_track_cues", "find_tracks_without_cues"):
+            assert tools[name].annotations.read_only_hint is True
 
 
 class TestOverTheProtocol:
@@ -108,6 +113,7 @@ class TestReadTools:
             lambda: server.search_tracks(),
             lambda: server.get_track_cues("2001"),
             lambda: server.find_tracks_without_cues(),
+            lambda: server.set_default_cue(),
         ],
     )
     def test_require_a_loaded_library(self, call):
@@ -140,3 +146,63 @@ class TestReadTools:
         )
 
         assert server.search_tracks()["total"] == 1
+
+
+class TestSetDefaultCue:
+    def test_dry_run_is_the_default_and_writes_nothing(self, loaded):
+        result = server.set_default_cue()
+
+        assert result["dryRun"] is True
+        assert result["tracksToChange"] == 3
+        assert result["tracksSkippedBecauseTheyHaveCues"] == 3
+        assert "Nothing has been written" in result["summary"]
+        assert not Path(result["outputFile"]).exists()
+        assert [e["trackId"] for e in result["examples"]] == ["1001", "4001", "5001"]
+
+    def test_writes_a_copy_and_leaves_the_original(self, loaded):
+        original = Path(loaded).read_bytes()
+
+        result = server.set_default_cue(dry_run=False)
+
+        written = Path(result["outputFile"])
+        assert result["dryRun"] is False
+        assert written.exists() and written != Path(loaded)
+        assert Path(loaded).read_bytes() == original
+
+    def test_custom_output_path(self, loaded, tmp_path):
+        target = tmp_path / "mine.xml"
+
+        result = server.set_default_cue(output_path=str(target), dry_run=False)
+
+        assert Path(result["outputFile"]) == target and target.exists()
+
+    def test_loaded_library_is_unchanged_after_writing(self, loaded):
+        server.set_default_cue(dry_run=False)
+
+        assert server.find_tracks_without_cues()["total"] == 3
+
+    def test_refuses_to_overwrite(self, loaded):
+        server.set_default_cue(dry_run=False)
+
+        with pytest.raises(ToolError, match="already exists"):
+            server.set_default_cue(dry_run=False)
+
+    def test_bad_output_path_is_reported_in_a_dry_run_too(self, loaded):
+        # The dry run must not promise a write that would fail.
+        result = server.set_default_cue(output_path="/nonexistent-folder/x.xml")
+
+        assert result["dryRun"] is True
+
+    def test_nothing_to_do(self, tmp_path):
+        path = tmp_path / "rb.xml"
+        path.write_bytes(
+            b'<DJ_PLAYLISTS><COLLECTION><TRACK TrackID="1" Name="A">'
+            b'<POSITION_MARK Type="0" Start="1" Num="0"/></TRACK></COLLECTION></DJ_PLAYLISTS>'
+        )
+        server.load_rekordbox_library(str(path))
+
+        result = server.set_default_cue(dry_run=False)
+
+        assert result["tracksToChange"] == 0
+        assert "Nothing to do" in result["summary"]
+        assert not Path(result["outputFile"]).exists()

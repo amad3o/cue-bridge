@@ -13,7 +13,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cuebridge.services import library_queries
+from cuebridge.services import library_queries, rekordbox_editor
 from cuebridge.services.rekordbox_service import (
     LibraryError,
     RekordboxLibrary,
@@ -27,7 +27,8 @@ mcp = MCPServer(
         "File > Export Collection in xml format) and inspects their cue points. "
         "Call load_rekordbox_library first with the path to the XML file. Tools "
         "return summaries and pages of results, so use limit and offset to see "
-        "more."
+        "more. set_default_cue creates a new edited copy of the file and never "
+        "modifies the original."
     ),
 )
 
@@ -123,6 +124,66 @@ def get_track_cues(track_id: str) -> dict:
 def find_tracks_without_cues(limit: int = 25, offset: int = 0) -> dict:
     """List tracks that have no cues, a page at a time."""
     return library_queries.search_tracks(_require_library(), has_cues=False, limit=limit, offset=offset)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    )
+)
+@_translate_errors
+def set_default_cue(output_path: str | None = None, dry_run: bool = True) -> dict:
+    """Add a hot cue A at 0:00 to every track that has no cue or loop.
+
+    This never modifies the loaded library file. It writes a new, edited copy
+    (by default next to the original, named like rekordbox.with-default-cues.xml)
+    and refuses to overwrite an existing file. Tracks that already have any cue
+    or loop are left alone.
+
+    `dry_run` is true by default and only reports what would change. Show the
+    user that summary and get their go-ahead before calling again with
+    dry_run=false. `output_path` must end in .xml.
+    """
+    library = _require_library()
+    plan = rekordbox_editor.build_default_cue_plan(library.path)
+
+    count = len(plan.changed_track_ids)
+    destination = (
+        Path(output_path).expanduser() if output_path else rekordbox_editor.default_output_path(plan.source)
+    )
+
+    result = {
+        "dryRun": dry_run,
+        "cueAdded": "hot cue A at 0:00.000",
+        "tracksToChange": count,
+        "tracksSkippedBecauseTheyHaveCues": plan.skipped_with_cues,
+        "sourceFile": str(plan.source),
+        "outputFile": str(destination),
+    }
+
+    by_id = library.tracks_by_id
+    result["examples"] = [
+        library_queries.track_to_summary(by_id[i]) for i in plan.changed_track_ids[:10] if i in by_id
+    ]
+
+    if count == 0:
+        result["summary"] = "Every track already has a cue. Nothing to do, and no file was written."
+        return result
+
+    if dry_run:
+        result["summary"] = (
+            f"Would add a hot cue A at 0:00 to {count} tracks and write the result to "
+            f"{destination}. The original file would not be modified. Nothing has been written."
+        )
+        return result
+
+    written = rekordbox_editor.write_plan(plan, output_path)
+    result["outputFile"] = str(written)
+    result["summary"] = (
+        f"Added a hot cue A at 0:00 to {count} tracks and wrote the copy to {written}. "
+        "The original file was not modified."
+    )
+    return result
 
 
 def main() -> None:
