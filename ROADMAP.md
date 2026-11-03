@@ -62,15 +62,15 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 
 ### 2. MCP server, read-only (Rekordbox)
 
-- [ ] Add the official Python MCP SDK (`mcp`, `FastMCP`) and a `mcp_server.py` entry point using stdio.
-- [ ] Tools, all with compact, paginated output:
+- [x] Add the official Python MCP SDK (`mcp` 2.x, where `FastMCP` is now `MCPServer`) and a `cuebridge/mcp_server.py` entry point using stdio: `python -m cuebridge.mcp_server`.
+- [x] Tools, all with compact, paginated output:
   - `load_rekordbox_library(path)`: parses and caches, returns a summary (track count, cue totals by type).
   - `search_tracks(query, has_cues, limit, offset)`: filter and page through tracks.
   - `get_track_cues(track_id)`: full cue detail for one track.
   - `find_tracks_without_cues()` and basic library stats.
-- [ ] Clear tool descriptions and error messages that tell the assistant what to do next (for example "load a library first").
+- [x] Clear tool descriptions and error messages that tell the assistant what to do next (for example "load a library first").
 - [ ] Document how to register the server in Claude Desktop and Claude Code.
-- [ ] Tests that call the tool functions directly with sample fixtures.
+- [x] Tests that call the tool functions directly with sample fixtures, and through the MCP protocol with an in-memory client.
 
 ### 3. Serato support (the riskiest part)
 
@@ -130,4 +130,4 @@ Only start this once sections 1–5 work end to end. Decide then, based on how o
 
 ## Suggested next step
 
-Section 1: extract a path-based service layer from `main.py`. It's a small refactor, and the MCP server (and later the web endpoints) depend on it. Then build the read-only Rekordbox tools (section 2), which give a working MCP server before Serato is started. The UI (section 7) waits until the text workflow is complete.
+Section 2 is built apart from registering the server in Claude. Do that and try the tools on a real library. Then start Serato (section 3), the riskiest part. The UI (section 7) waits until the text workflow is complete.
