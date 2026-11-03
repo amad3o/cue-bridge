@@ -79,10 +79,30 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 
 ### 3. Serato support (the riskiest part)
 
-- [ ] Decide on the Serato input: read cues from audio-file tags (`Serato Markers2`, using mutagen or a custom GEOB decoder). Use crates and `database V2` only to list tracks.
-- [ ] Collect small real Serato-tagged fixtures for tests.
-- [ ] Write a real `serato_parser` that returns `Track[]` in the same normalized shape.
-- [ ] Tool: `load_serato_library(path)` or `read_serato_cues(folder_or_file)`.
+**Findings from a real library** (1,667 Apple Music tracks, Serato DJ Pro, files on an ExFAT drive):
+
+- Serato's `database V2` is a track list only (path, title, artist, BPM, key). It has no cues. Paths are stored without the leading `/`. Serato keeps one `_Serato_` folder per drive, so the library on the music drive is the real one.
+- Cues live in the audio files: a `GEOB` frame named `Serato Markers2` in the ID3 tag (MP3), or in the `id3 ` chunk (WAV). Its layout: `01 01` + base64 text (wrapped at 72 characters, no `=` padding) + NUL padding to exactly 470 bytes. The base64 decodes to `01 01`, then entries (`name\0`, 4-byte big-endian length, payload), then a final NUL. Entries seen: `COLOR`, `CUE`, `BPMLOCK`. A `CUE` payload is 13 bytes: reserved, slot (0-based), position in ms (4 bytes big-endian), reserved, RGB (3 bytes), 2 reserved, name + NUL.
+- All 1,541 real tags decode and **re-encode byte for byte**, which is the test the codec has to keep passing.
+- Files also carry a legacy `Serato Markers_` frame with the same cues in an older format, plus `Overview`, `Analysis`, `Autotags`, `BeatGrid` frames and artwork. A writer must keep all of them and keep the legacy frame consistent.
+- 241 files already have Serato cues, most synced earlier by Lexicon from Rekordbox memory cues.
+- **Timing differs between the programs.** Rekordbox minus Serato: 0 ms for WAV; about 5-6 ms for MP3 with a LAME header; about -26 ms (one MP3 frame) for three MP3s with an Xing/Info frame but no LAME tag. Small sample, so the rule is a hypothesis.
+- ExFAT has no separate `ctime`, and Serato may keep file times, so a change to a tag can't be detected from timestamps. Compare contents.
+
+**Decisions**
+
+- **Rekordbox wins.** When the cues differ, the Serato tag is rewritten from Rekordbox. Cues are never merged.
+- The Lexicon-written cues are replaced only when they differ from Rekordbox after the timing offset is applied.
+
+- [x] Decide on the Serato input: read cues from audio-file tags; use `database V2` only to list tracks.
+- [x] Decode `Markers2` and prove the format against real data (read side).
+- [x] Codec (`parsers/serato_markers.py`) and a read-only tag reader (`parsers/serato_tags.py`, MP3 and WAV via mutagen) with tests. Validated on the real library: all 1,541 tags decode and re-encode byte for byte, covering 365 cues in 241 files, with no cue needing the raw-bytes fallback. A cue the codec can't reproduce exactly is kept verbatim as a `RawEntry`, so a rewrite can never silently alter it.
+- [ ] Tag *writer*: put the new `Markers2` frame into a file while keeping every other frame, with backup, atomic replace and read-back verification.
+- [ ] Per-format timing offset (WAV 0 ms, MP3 by header type), calibrated on the existing Lexicon-synced pairs.
+- [ ] Collect small real Serato-tagged fixtures for tests (done for one MP3; need a WAV with cues).
+- [ ] Write the legacy `Serato Markers_` frame consistently, or confirm Serato ignores it.
+- [ ] Tool: `load_serato_library(path)` / `read_serato_cues(...)`.
+- [ ] Confirm in Serato that a file we wrote shows the right cues. Only the user can do this.
 
 ### 4. Compare
 
