@@ -58,6 +58,7 @@ Start a new session (or run `/mcp`) and `cuebridge` should show as connected. Th
 | `find_missing_files(only_with_cues=True, limit, offset)` | Rekordbox tracks whose file isn't where Rekordbox says, and where Apple Music has it (matched by path, then file name, then title and artist; an unclear match is never guessed). Needs both libraries loaded. |
 | `compare_libraries()` | Compares the loaded Rekordbox and Apple Music libraries: tracks only in one (Apple Music tracks that are in no playlist are counted and ignored, since only playlisted tracks are meant for Rekordbox), Apple Music files listed twice, and every playlist that differs and how. Needs both loaded. |
 | `list_library_differences(kind, playlist, music_folder_only=True, include_unplaylisted=False, limit, offset)` | The tracks behind that comparison (`in_apple_music_only`, `in_rekordbox_only`, `duplicate_entries`), for the whole library or one playlist. |
+| `export_playlists_for_rekordbox(playlists, all_playlists=False, output_path, folder_name, dry_run=True)` | Writes Apple Music playlists into a small Rekordbox XML (default `cuebridge-playlists.xml` next to your export) that Rekordbox imports in one step, replacing the drag and drop. By default only playlists that differ from Rekordbox are included. See [Getting playlists into Rekordbox](#getting-playlists-into-rekordbox). |
 | `set_default_cue(output_path, dry_run=True)` | Adds a hot cue A at 0:00 to every track with no cue or loop, in the loaded XML file (a backup is saved first). |
 | `duplicate_memory_cues_to_hot_cues(output_path, dry_run=True)` | Copies every memory cue to a hot cue at the same position, in the lowest free slots (A-H), in the loaded XML file. Memory cues are kept. A memory cue that already has a hot cue at the same time is skipped, so running it twice changes nothing. Cues beyond 8 are reported and not copied. |
 
@@ -81,6 +82,18 @@ These two tools **edit your `rekordbox.xml` in place**. That file is an export, 
 To undo an edit, copy the backup back over `rekordbox.xml`.
 
 Back up your Rekordbox library before importing an edited file. How Rekordbox treats cues on tracks already in your collection when it imports an XML hasn't been tested yet, so the edited file is only proven to be valid XML that CueBridge itself reads back correctly.
+
+### Getting playlists into Rekordbox
+
+Rekordbox can't be told to add playlists from outside, so `export_playlists_for_rekordbox` writes the next best thing: one small XML file holding a folder of the playlists that need to get in. Tracks Rekordbox already has are copied as they are (cues and beat grids included); tracks it doesn't have are added from Apple Music's data; a track whose file moved gets Apple Music's current path. The tool never edits your Rekordbox export or Rekordbox's database, and it only replaces a file it wrote itself.
+
+The loop, whenever you add music or playlists in Apple Music:
+
+1. Export your Apple Music library again (**File → Library → Export Library**) and your Rekordbox collection (**File → Export Collection in xml format**).
+2. Ask Claude to load both, then to do a dry run of the playlist export, and to write it.
+3. In Rekordbox, once: **Preferences → Advanced → Database → rekordbox xml → Imported Library**, choose `cuebridge-playlists.xml`, and show the *rekordbox xml* item in the sidebar. Each time: reload it, expand it, right-click the folder (default name *Apple Music*) and choose **Import Playlist**.
+
+Not yet tested: how Rekordbox treats a playlist that already exists (a copy, or a merge) and whether importing a track it already has makes a duplicate. Try it with one small playlist first.
 
 ### Syncing cues to Serato
 

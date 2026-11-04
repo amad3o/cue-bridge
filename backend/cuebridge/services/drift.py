@@ -40,6 +40,8 @@ class LibraryDrift:
     duplicate_entries: list[tuple[MusicTrack, ...]] = field(default_factory=list)  # one file, several entries
     playlists: list[PlaylistDrift] = field(default_factory=list)
     rekordbox_only_playlists: list[RekordboxPlaylist] = field(default_factory=list)
+    # Apple Music track ID -> the Rekordbox track IDs that are the same file.
+    rekordbox_for_apple: dict[int, list[str]] = field(default_factory=dict)
 
 
 def _same_name(a: str, b: str) -> bool:
@@ -100,6 +102,7 @@ def compare_libraries(
             if folder and normalize_path(track.filePath).startswith(folder):
                 drift.rekordbox_only_in_music_folder.append(track)
 
+    drift.rekordbox_for_apple = rb_for_apple
     playlisted = {i for p in music.user_playlists if not p.is_folder for i in p.track_ids}
 
     for track in music.tracks:

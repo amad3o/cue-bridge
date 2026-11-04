@@ -14,7 +14,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cuebridge.services import drift, library_queries, library_reports, rekordbox_editor, serato_sync
+from cuebridge.services import drift, library_queries, library_reports, playlist_export, rekordbox_editor, serato_sync
 from cuebridge.parsers.apple_music_xml import MusicLibrary
 from cuebridge.services.apple_music_service import get_apple_music_library
 from cuebridge.services.rekordbox_service import (
@@ -332,6 +332,94 @@ def list_library_differences(
         "hasMore": offset + limit < len(rows),
         "items": page,
     }
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
+    )
+)
+@_translate_errors
+def export_playlists_for_rekordbox(
+    playlists: list[str] | None = None,
+    all_playlists: bool = False,
+    output_path: str | None = None,
+    folder_name: str = "Apple Music",
+    dry_run: bool = True,
+) -> dict:
+    """Write Apple Music playlists into a small Rekordbox XML file, ready to import in one step.
+
+    Needs both libraries loaded. By default it includes only the playlists
+    that differ between Apple Music and Rekordbox (new playlists, or ones with
+    added or removed tracks); `playlists` names specific ones, and
+    `all_playlists` includes every one. Only playlisted tracks are involved.
+    The file holds one folder (`folder_name`) with those playlists. Tracks that
+    Rekordbox already has are copied as they are, with their cues and beat
+    grids; tracks it doesn't have are added from Apple Music's data. Tracks
+    whose file can't be found are left out and listed.
+
+    It writes a separate file (default: cuebridge-playlists.xml next to the
+    loaded Rekordbox export). It never changes the Rekordbox export or
+    Rekordbox's database, and it only replaces a file that CueBridge wrote.
+    Run it with dry_run=true first and show the user the summary.
+
+    To import (steps for the user): in Rekordbox, Preferences > Advanced >
+    Database > rekordbox xml > Imported Library, choose the file; show the
+    'rekordbox xml' item in the sidebar; expand it, right-click the folder and
+    choose Import Playlist. Whether re-importing a playlist that already exists
+    adds a copy or merges has not been tested.
+    """
+    rekordbox, music = _require_library(), _require_apple_library()
+    result = _drift()
+    plan = playlist_export.plan_export(rekordbox, music, result, names=playlists, all_playlists=all_playlists)
+    target = playlist_export.check_output_path(
+        Path(output_path) if output_path else playlist_export.default_output_path(rekordbox), rekordbox
+    )
+
+    summary = {
+        "dryRun": dry_run,
+        "file": str(target),
+        "folder": folder_name,
+        "playlists": [
+            {"name": p.name, "tracks": len(p.keys), "why": p.reason} for p in plan.playlists
+        ],
+        "alreadyInSync": plan.in_sync,
+        "tracksAlreadyInRekordbox": len(plan.existing_ids),
+        "newTracksForRekordbox": len(plan.new_tracks),
+        "newTrackExamples": [
+            f"{t.artist + ' - ' if t.artist else ''}{t.title}" for _, t in plan.new_tracks[:10]
+        ],
+        "movedFilesFixed": len(plan.relocated),
+        "leftOut": [{"playlist": p, "track": t, "why": why} for p, t, why in plan.skipped[:20]],
+        "duplicateEntriesRemoved": plan.duplicates_removed,
+        "wouldReplaceEarlierFile": target.exists(),
+    }
+
+    if not plan.playlists:
+        summary["summary"] = (
+            f"Nothing to export: all {len(plan.in_sync)} playlists already match Rekordbox. "
+            "Pass playlists=[...] or all_playlists=true to export some anyway."
+        )
+        return summary
+
+    data = playlist_export.build_xml(plan, playlist_export.export_source_bytes(rekordbox), folder_name)
+    playlist_export.verify_xml(data, plan)
+    summary["sizeKilobytes"] = round(len(data) / 1024, 1)
+    what = (
+        f"{len(plan.playlists)} playlists ({len(plan.existing_ids)} tracks Rekordbox has, "
+        f"{len(plan.new_tracks)} new) in the folder {folder_name!r}"
+    )
+
+    if dry_run:
+        summary["summary"] = f"Would write {what} to {target}. Nothing has been written."
+        return summary
+
+    playlist_export.write_export(data, target)
+    summary["summary"] = (
+        f"Wrote {what} to {target}. In Rekordbox, load it under Preferences > Advanced > Database > "
+        "rekordbox xml, then right-click the folder in the 'rekordbox xml' sidebar item and choose Import Playlist."
+    )
+    return summary
 
 
 @mcp.tool(annotations=READ_ONLY)

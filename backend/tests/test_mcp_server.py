@@ -58,6 +58,7 @@ class TestRegistration:
             "find_missing_files",
             "compare_libraries",
             "list_library_differences",
+            "export_playlists_for_rekordbox",
             "set_default_cue",
             "duplicate_memory_cues_to_hot_cues",
             "sync_cues_to_serato",
