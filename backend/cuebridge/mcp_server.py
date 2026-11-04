@@ -14,7 +14,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cuebridge.services import drift, library_queries, library_reports, playlist_export, rekordbox_editor, serato_sync
+from cuebridge.services import drift, library_queries, library_reports, playlist_export, rekordbox_db, rekordbox_editor, serato_sync
 from cuebridge.parsers.apple_music_xml import MusicLibrary
 from cuebridge.services import apple_music_live
 from cuebridge.services import rekordbox_service
@@ -475,6 +475,129 @@ def export_playlists_for_rekordbox(
         "then right-click the folder in the 'rekordbox xml' sidebar item and choose Import Playlist."
     )
     return summary
+
+
+def _db_target(database_path: str | None) -> Path:
+    return Path(database_path).expanduser() if database_path else rekordbox_db.find_database()
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+    )
+)
+@_translate_errors
+def sync_playlists_to_rekordbox(
+    playlists: list[str] | None = None,
+    dry_run: bool = True,
+    expected_additions: int | None = None,
+    database_path: str | None = None,
+) -> dict:
+    """Add tracks that are in an Apple Music playlist but missing from the same Rekordbox playlist.
+
+    This edits Rekordbox's own database (master.db), so be careful. It needs the
+    Apple Music library loaded (load_apple_music_library) and needs no Rekordbox
+    XML export: it reads the live database through a copy. It only ever ADDS a
+    track that is already in the Rekordbox collection to the END of an existing
+    top-level playlist with the same name. It never removes tracks, creates
+    playlists, or touches tracks, files, cues or other playlists. Tracks Rekordbox
+    doesn't have yet, and playlists it doesn't have, are reported, not created
+    (a new track must first be imported, for example with
+    export_playlists_for_rekordbox).
+
+    - Call it with dry_run=true first (the default). Rekordbox may be open for
+      that. It lists exactly what would be added where. Show the user.
+    - Rekordbox must be closed to write. Then call with dry_run=false and
+      expected_additions set to the "additions" count from the dry run.
+    - Before writing, the database files are copied to ~/.cuebridge/db-backups
+      and the copy is checked; afterwards the database is read again and
+      everything must be exactly as planned, otherwise the copy is put back.
+      undo_rekordbox_playlist_sync removes the added rows.
+
+    `playlists` limits it to some playlist names. `database_path` overrides
+    where master.db is (it is found from Rekordbox's settings).
+    """
+    music = _require_apple_library()
+    db_path = _db_target(database_path)
+    backend = rekordbox_db.default_backend()
+    snapshot = rekordbox_db.read_snapshot(db_path, backend)
+    plan = rekordbox_db.plan_additions(snapshot, music, playlists)
+    running = rekordbox_db.rekordbox_running()
+
+    result = {
+        "dryRun": dry_run,
+        "database": str(db_path),
+        "rekordboxIsRunning": running,
+        "additions": len(plan.additions),
+        "willAdd": [
+            {"playlist": a.playlist_name, "track": a.title, "artist": a.artist, "position": a.position}
+            for a in plan.additions[:50]
+        ],
+        "notInTheRekordboxCollection": [{"playlist": p, "track": t} for p, t in plan.not_in_collection[:20]],
+        "playlistsRekordboxDoesntHave": plan.missing_playlists,
+        "ambiguousPlaylistNames": plan.ambiguous,
+        "tracksOnlyRekordboxHas": plan.extra_in_rekordbox,
+        "playlistsAlreadyInSync": len(plan.in_sync),
+    }
+
+    if not plan.additions:
+        result["summary"] = "Nothing to add: the Rekordbox playlists already contain what Apple Music's do (that Rekordbox has)."
+        return result
+
+    if dry_run:
+        result["summary"] = (
+            f"Would add {len(plan.additions)} track(s) to existing Rekordbox playlists. Nothing has been written."
+            + (" Quit Rekordbox before applying." if running else "")
+        )
+        return result
+
+    if expected_additions != len(plan.additions):
+        raise ToolError(
+            f"This would add {len(plan.additions)} tracks, but expected_additions was {expected_additions!r}. "
+            "Run a dry run, show the user the number, and pass it as expected_additions."
+        )
+
+    outcome = rekordbox_db.apply_plan(plan, db_path, music, backend, playlists)
+    result["added"] = outcome.added
+    result["backup"] = str(outcome.backup)
+    result["journal"] = str(outcome.journal)
+    result["summary"] = (
+        f"Added {outcome.added} track(s) and verified the database. Backup: {outcome.backup}. "
+        f"To reverse this, call undo_rekordbox_playlist_sync (journal: {outcome.journal}). You can open Rekordbox now."
+    )
+    return result
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+    )
+)
+@_translate_errors
+def undo_rekordbox_playlist_sync(journal: str | None = None, dry_run: bool = True) -> dict:
+    """Remove the playlist entries a sync_playlists_to_rekordbox run added.
+
+    `journal` is the path it reported; the most recent one is used if omitted.
+    Only the exact rows that run added are removed, and only if they are still
+    there unchanged. Rekordbox must be closed unless this is a dry run.
+    """
+    path = Path(journal).expanduser() if journal else rekordbox_db.latest_journal()
+
+    if path is None or not path.is_file():
+        raise ToolError("No Rekordbox playlist journal found. Pass the journal path from the sync.")
+
+    outcome = rekordbox_db.undo(path, rekordbox_db.default_backend(), dry_run=dry_run)
+
+    return {
+        "dryRun": dry_run,
+        "journal": str(path),
+        "removed" if not dry_run else "wouldRemove": outcome.removed,
+        "skipped": [{"entry": e, "why": why} for e, why in outcome.skipped],
+        "summary": (
+            f"{'Would remove' if dry_run else 'Removed'} {len(outcome.removed)} entr"
+            f"{'y' if len(outcome.removed) == 1 else 'ies'}; {len(outcome.skipped)} skipped."
+        ),
+    }
 
 
 @mcp.tool(annotations=READ_ONLY)

@@ -59,6 +59,8 @@ Start a new session (or run `/mcp`) and `cuebridge` should show as connected. Th
 | `compare_libraries()` | Compares the loaded Rekordbox and Apple Music libraries: tracks only in one (Apple Music tracks that are in no playlist are counted and ignored, since only playlisted tracks are meant for Rekordbox), Apple Music files listed twice, and every playlist that differs and how. Needs both loaded. |
 | `list_library_differences(kind, playlist, music_folder_only=True, include_unplaylisted=False, limit, offset)` | The tracks behind that comparison (`in_apple_music_only`, `in_rekordbox_only`, `duplicate_entries`), for the whole library or one playlist. |
 | `export_playlists_for_rekordbox(playlists, all_playlists=False, output_path, folder_name, dry_run=True)` | Adds Apple Music playlists to the Rekordbox XML (or to a separate file if `output_path` is given) so Rekordbox imports them in one step, replacing the drag and drop. By default only playlists that differ from Rekordbox are included. See [Getting playlists into Rekordbox](#getting-playlists-into-rekordbox). |
+| `sync_playlists_to_rekordbox(playlists, dry_run=True, expected_additions, database_path)` | **Edits Rekordbox's database.** Adds tracks that are in an Apple Music playlist but missing from the same Rekordbox playlist, at the end of the existing playlist (this is how an existing playlist can be updated; XML import can't). Needs no Rekordbox export. Needs [the optional database packages](#updating-rekordbox-playlists-directly). |
+| `undo_rekordbox_playlist_sync(journal, dry_run=True)` | Removes exactly the playlist entries a sync added. |
 | `set_default_cue(output_path, dry_run=True)` | Adds a hot cue A at 0:00 to every track with no cue or loop, in the loaded XML file (a backup is saved first). |
 | `duplicate_memory_cues_to_hot_cues(output_path, dry_run=True)` | Copies every memory cue to a hot cue at the same position, in the lowest free slots (A-H), in the loaded XML file. Memory cues are kept. A memory cue that already has a hot cue at the same time is skipped, so running it twice changes nothing. Cues beyond 8 are reported and not copied. |
 
@@ -98,6 +100,28 @@ The loop, whenever you add music or playlists in Apple Music:
 What Rekordbox really has is only known from an export, so the added folder and tracks are marked as pending: the loader leaves them out until you export Rekordbox afresh, so the comparison keeps showing what still needs importing.
 
 **Not yet verified in Rekordbox.** The file is valid XML and re-parses to exactly what was planned, but no playlist has been imported from it yet. Check with one small change first (a track added to a small playlist).
+
+### Updating Rekordbox playlists directly
+
+Rekordbox can only create a playlist from an XML import; it never updates one that exists. To add a track to a playlist you already have, CueBridge edits Rekordbox's own database (`master.db`, found from Rekordbox's settings; on your setup it lives on the music drive, not in your home folder). This is the riskiest thing CueBridge does, so it is narrow and layered:
+
+- **What it does.** It only adds a track that is already in your collection to the end of an existing top-level playlist with the same name. It never removes tracks, creates playlists, or touches tracks, files, cues, analysis or other playlists. Tracks Rekordbox doesn't have, and playlists it doesn't have, are reported (import a new track first, for example with `export_playlists_for_rekordbox`).
+- **Rekordbox must be closed to write.** Planning (the dry run) reads a copy of the database, so Rekordbox may stay open for that.
+- **Backup first.** The database files are copied to `~/.cuebridge/db-backups/<time>/` and the copy is checked byte for byte and by reading it back. (Rekordbox also keeps its own dated backups next to `master.db`.)
+- **Rekordbox's own bookkeeping.** The write goes through pyrekordbox's methods, which keep row IDs, timestamps and sync counters right.
+- **Checked afterwards.** The database is read again; every playlist must be exactly as planned and the track list unchanged, otherwise the backup is put back.
+- **Undo.** `undo_rekordbox_playlist_sync` removes exactly the rows a run added, if they are still there unchanged.
+- **Dry run first, and the count must match** (`expected_additions`), as with the Serato sync.
+
+It is not an officially supported way to edit Rekordbox, and a Rekordbox update could change the database format. It needs two optional packages:
+
+```bash
+brew install sqlcipher
+cd backend && source .venv/bin/activate
+P="$(brew --prefix sqlcipher)"
+CFLAGS="-I$P/include -I$P/include/sqlcipher" LDFLAGS="-L$P/lib" SQLCIPHER_PATH="$P" \
+  pip install -r requirements-rekordbox-db.txt
+```
 
 ### Syncing cues to Serato
 

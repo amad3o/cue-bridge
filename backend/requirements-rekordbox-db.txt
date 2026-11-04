@@ -1,0 +1,8 @@
+# Optional: needed only for sync_playlists_to_rekordbox / undo_rekordbox_playlist_sync,
+# which read and edit Rekordbox's own database. SQLCipher must be installed first:
+#   brew install sqlcipher
+#   CFLAGS="-I$(brew --prefix sqlcipher)/include -I$(brew --prefix sqlcipher)/include/sqlcipher" \
+#   LDFLAGS="-L$(brew --prefix sqlcipher)/lib" SQLCIPHER_PATH="$(brew --prefix sqlcipher)" \
+#   pip install -r requirements-rekordbox-db.txt
+pyrekordbox>=0.5
+sqlcipher3>=0.6
