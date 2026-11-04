@@ -189,7 +189,7 @@ What can be written, for planning: Apple Music's database is read-only for us (w
 
 ### Not yet verified
 
-- [ ] **Importing the playlist folder into Rekordbox 7.** The XML is valid and re-parses to exactly what was planned, but Rekordbox has not imported it. Check: does *Import Playlist* on the folder bring in all playlists at once; does re-importing a playlist that exists make a copy or merge; does a track Rekordbox already has get duplicated; do copied cues and beat grids survive; do the new tracks (built from Apple Music data) get analysed normally. Try one small playlist first.
+- [~] **Importing the playlist folder into Rekordbox 7.** Tried on the real library with one playlist (`r&b`, 3 tracks Rekordbox already had): Import Playlist works from the folder in the `rekordbox xml` sidebar item, the playlist did not appear twice (merged or replaced, not copied), and the tracks were not duplicated. Still to check: a playlist whose content differs (a track added or removed), a track Rekordbox doesn't have yet (built from Apple Music's data: is it analysed, does it get the right metadata), and that cues and beat grids survive on a track that has them (the three test tracks had none).
 
 Things that are built and tested in code but have never been checked in the real application. Most need the user, because only they can run Rekordbox and Serato.
 
