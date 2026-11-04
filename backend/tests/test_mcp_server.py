@@ -56,6 +56,8 @@ class TestRegistration:
             "load_apple_music_library",
             "get_playlist_tracks",
             "find_missing_files",
+            "compare_libraries",
+            "list_library_differences",
             "set_default_cue",
             "duplicate_memory_cues_to_hot_cues",
             "sync_cues_to_serato",

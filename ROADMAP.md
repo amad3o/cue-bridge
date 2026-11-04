@@ -168,9 +168,9 @@ What can be written, for planning: Apple Music's database is read-only for us (w
 
 **Reports (read-only)**
 
-- [ ] **Drift between Apple Music and Rekordbox:** tracks and playlists present in one and not the other. The sample (with a stale Rekordbox export) showed 601 Apple Music tracks missing from Rekordbox, 125 Rekordbox tracks no longer in Apple Music, and only 3 of 30 playlists fully covered. Needs a fresh `rekordbox.xml`.
+- [x] **Drift between Apple Music and Rekordbox** (`compare_libraries`, `list_library_differences`, `services/drift.py`): tracks and playlists present in one and not the other. The stale July 2025 export showed 601 Apple Music tracks missing from Rekordbox and 3 of 30 playlists covered. The fresh export (Nov 2026) shows 15 Apple Music tracks not in Rekordbox, 16 Rekordbox files inside Apple Music's folder that Apple Music doesn't have (the other ~5,540 Rekordbox-only tracks are outside it: sample packs and the like), and all 30 playlists in sync. Rekordbox's playlists are now parsed.
 - [x] **Missing and moved files** for Rekordbox (`find_missing_files`), and the sync uses Apple Music's path for a moved file. Real library: 9 cued tracks not at their path; 5 found through Apple Music (all already in sync), 4 not recoverable (one is a Tidal streaming track, one is an M4A missing from both libraries, two are in neither). Still to do: the same check for Apple Music's own paths.
-- [ ] **Duplicates:** the same title and artist (55 pairs in the Rekordbox collection), the same file in several folders, and near-duplicates by duration and size.
+- [ ] **Duplicates:** the same title and artist (55 pairs in the Rekordbox collection), the same file in several folders, and near-duplicates by duration and size. Done so far: Apple Music lists 51 files twice (the same file under two track IDs), shown by `list_library_differences("duplicate_entries")`.
 - [ ] **Metadata gaps:** no artist (418 of 1,177 in Rekordbox), no BPM or key, zero length, "Unknown Artist / Unknown Album" folders, sampler one-shots mixed into the library.
 - [ ] **Playlist hygiene:** tracks in no playlist, tracks in many, empty playlists, overlap between genre playlists, the biggest playlists.
 - [ ] **Format and quality:** counts by format, bit rate and sample rate; low-bit-rate MP3s; very large files.

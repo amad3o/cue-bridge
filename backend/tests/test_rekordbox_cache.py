@@ -38,13 +38,13 @@ def fresh_cache():
 def parse_calls(monkeypatch):
     """Count how many times a file is actually parsed."""
     calls = []
-    real = rekordbox_service.parse_rekordbox_file
+    real = rekordbox_service.parse_rekordbox_bytes
 
-    def counting(path):
-        calls.append(Path(path))
-        return real(path)
+    def counting(contents, *args, **kwargs):
+        calls.append(contents)
+        return real(contents, *args, **kwargs)
 
-    monkeypatch.setattr(rekordbox_service, "parse_rekordbox_file", counting)
+    monkeypatch.setattr(rekordbox_service, "parse_rekordbox_bytes", counting)
     return calls
 
 

@@ -13,9 +13,9 @@ Early development. What works today:
 - Writing an **edited copy** of the XML with a default hot cue added to tracks that have none.
 
 - Copying Rekordbox cues into the Serato tags of your MP3 and WAV files, with Rekordbox winning, a journal and undo.
-- Reading an Apple Music export (tracks and playlists), matching its tracks to Rekordbox's, and finding files that moved.
+- Reading an Apple Music export (tracks and playlists), matching its tracks to Rekordbox's, finding files that moved, and comparing the two libraries (tracks and playlists).
 
-Not built yet: the drift reports between the two libraries, duplicates and playlist hygiene, writing playlists back, and M4A/AIFF support. See [ROADMAP.md](ROADMAP.md) for completed work, known issues and what's next.
+Not built yet: metadata and playlist-hygiene reports, writing playlists back, and M4A/AIFF support. See [ROADMAP.md](ROADMAP.md) for completed work, known issues and what's next.
 
 ## Setup
 
@@ -56,6 +56,8 @@ Start a new session (or run `/mcp`) and `cuebridge` should show as connected. Th
 | `load_apple_music_library(path)` | Loads an Apple Music library exported as XML (**File → Library → Export Library**) and summarises it: tracks, formats, metadata gaps and every playlist with its size. |
 | `get_playlist_tracks(name, limit, offset)` | The tracks of one Apple Music playlist, in order, a page at a time. |
 | `find_missing_files(only_with_cues=True, limit, offset)` | Rekordbox tracks whose file isn't where Rekordbox says, and where Apple Music has it (matched by path, then file name, then title and artist; an unclear match is never guessed). Needs both libraries loaded. |
+| `compare_libraries()` | Compares the loaded Rekordbox and Apple Music libraries: tracks only in one, Apple Music files listed twice, and every playlist that differs and how. Needs both loaded. |
+| `list_library_differences(kind, playlist, music_folder_only=True, limit, offset)` | The tracks behind that comparison (`in_apple_music_only`, `in_rekordbox_only`, `duplicate_entries`), for the whole library or one playlist. |
 | `set_default_cue(output_path, dry_run=True)` | Adds a hot cue A at 0:00 to every track with no cue or loop, in the loaded XML file (a backup is saved first). |
 | `duplicate_memory_cues_to_hot_cues(output_path, dry_run=True)` | Copies every memory cue to a hot cue at the same position, in the lowest free slots (A-H), in the loaded XML file. Memory cues are kept. A memory cue that already has a hot cue at the same time is skipped, so running it twice changes nothing. Cues beyond 8 are reported and not copied. |
 

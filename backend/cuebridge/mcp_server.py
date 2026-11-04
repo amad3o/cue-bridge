@@ -7,13 +7,14 @@ currently loaded library and translate errors for the assistant.
 """
 
 import functools
+from collections import Counter
 from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cuebridge.services import library_queries, library_reports, rekordbox_editor, serato_sync
+from cuebridge.services import drift, library_queries, library_reports, rekordbox_editor, serato_sync
 from cuebridge.parsers.apple_music_xml import MusicLibrary
 from cuebridge.services.apple_music_service import get_apple_music_library
 from cuebridge.services.rekordbox_service import (
@@ -201,6 +202,130 @@ def find_missing_files(only_with_cues: bool = True, limit: int = 25, offset: int
             }
             for m in page
         ],
+    }
+
+
+def _drift() -> drift.LibraryDrift:
+    rekordbox, music = _require_library(), _require_apple_library()
+    return drift.compare_libraries(rekordbox.tracks, rekordbox.playlists, music)
+
+
+@mcp.tool(annotations=READ_ONLY)
+@_translate_errors
+def compare_libraries() -> dict:
+    """Compare the loaded Rekordbox and Apple Music libraries: tracks and playlists.
+
+    Needs both loaded. Tracks are paired by path, then file name, then title
+    and artist. Reports how many tracks are in Apple Music only, in Rekordbox
+    only (and how many of those are inside Apple Music's own music folder, which
+    means a library file Apple Music has lost), how many Apple Music entries are
+    duplicates of the same file, and which playlists differ and how. Use
+    list_library_differences for the tracks themselves.
+    """
+    result = _drift()
+    rekordbox, music = _require_library(), _require_apple_library()
+    statuses = Counter(p.status for p in result.playlists)
+
+    summary = {
+        "rekordboxTracks": len(rekordbox.tracks),
+        "appleMusicTracks": len(music.tracks),
+        "matched": result.matched,
+        "inAppleMusicOnly": len(result.apple_only),
+        "inRekordboxOnly": len(result.rekordbox_only),
+        "inRekordboxOnlyButInAppleMusicsFolder": len(result.rekordbox_only_in_music_folder),
+        "ambiguous": len(result.ambiguous),
+        "appleMusicFilesListedTwice": len(result.duplicate_entries),
+        "playlists": {
+            "inAppleMusic": len(result.playlists),
+            "inSync": statuses["in_sync"],
+            "differ": statuses["differs"],
+            "missingInRekordbox": statuses["missing_in_rekordbox"],
+            "inRekordboxOnly": [p.name for p in result.rekordbox_only_playlists],
+        },
+        "playlistsNeedingAttention": [
+            {
+                "name": p.name,
+                "status": p.status,
+                "appleMusicTracks": p.apple_count,
+                "rekordboxTracks": p.rekordbox_count,
+                "onlyInAppleMusic": len(p.apple_only),
+                "onlyInRekordbox": len(p.rekordbox_only),
+            }
+            for p in result.playlists
+            if p.status != "in_sync"
+        ],
+    }
+    summary["summary"] = (
+        f"{result.matched} Rekordbox tracks are in Apple Music; {len(result.apple_only)} Apple Music tracks "
+        f"are not in Rekordbox and {len(result.rekordbox_only)} Rekordbox tracks are not in Apple Music. "
+        f"{statuses['in_sync']} of {len(result.playlists)} playlists are in sync."
+    )
+    return summary
+
+
+@mcp.tool(annotations=READ_ONLY)
+@_translate_errors
+def list_library_differences(
+    kind: str,
+    playlist: str | None = None,
+    music_folder_only: bool = True,
+    limit: int = 25,
+    offset: int = 0,
+) -> dict:
+    """List the tracks behind compare_libraries, a page at a time.
+
+    `kind`: "in_apple_music_only", "in_rekordbox_only" or "duplicate_entries"
+    (Apple Music entries that point at one file).
+    `playlist`: limit "in_apple_music_only" / "in_rekordbox_only" to one
+    playlist, meaning tracks that are in that playlist in one program and not in
+    the other's playlist of that name.
+    `music_folder_only` (default true): for "in_rekordbox_only" over the whole
+    library, list only files inside Apple Music's music folder. The rest are
+    usually things that were never in Apple Music (sample packs and the like).
+    `limit` is capped at 100.
+    """
+    result = _drift()
+    limit = max(1, min(limit, library_queries.MAX_LIMIT))
+    offset = max(0, offset)
+
+    if kind == "duplicate_entries":
+        rows = [
+            {"title": g[0].title, "artist": g[0].artist, "path": g[0].path, "entries": len(g), "trackIds": [t.track_id for t in g]}
+            for g in result.duplicate_entries
+        ]
+    elif kind in ("in_apple_music_only", "in_rekordbox_only"):
+        if playlist:
+            match = next((p for p in result.playlists if p.name.casefold() == playlist.strip().casefold()), None)
+
+            if match is None:
+                raise ToolError(f"No Apple Music playlist named {playlist!r}.")
+
+            source = match.apple_only if kind == "in_apple_music_only" else match.rekordbox_only
+        elif kind == "in_apple_music_only":
+            source = result.apple_only
+        else:
+            source = result.rekordbox_only_in_music_folder if music_folder_only else result.rekordbox_only
+
+        if kind == "in_apple_music_only":
+            rows = [library_reports.music_track_to_dict(t) for t in source]
+        else:
+            rows = [
+                {"trackId": t.trackId, "title": t.trackTitle, "artist": t.artist, "cues": len(t.cues), "path": t.filePath}
+                for t in source
+            ]
+    else:
+        raise ToolError('kind must be "in_apple_music_only", "in_rekordbox_only" or "duplicate_entries".')
+
+    page = rows[offset : offset + limit]
+
+    return {
+        "kind": kind,
+        "playlist": playlist,
+        "total": len(rows),
+        "offset": offset,
+        "returned": len(page),
+        "hasMore": offset + limit < len(rows),
+        "items": page,
     }
 
 

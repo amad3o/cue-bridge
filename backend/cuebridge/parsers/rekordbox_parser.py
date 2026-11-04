@@ -1,4 +1,5 @@
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 
 from cuebridge.parsers.paths import location_to_path
 
@@ -7,6 +8,13 @@ from cuebridge.parsers.paths import location_to_path
 # Only cues and loops are parsed; fades and load markers have no Serato equivalent.
 TYPE_CUE = "0"
 TYPE_LOOP = "4"
+
+
+@dataclass(frozen=True)
+class RekordboxPlaylist:
+    name: str
+    folders: tuple[str, ...]  # the folders it sits in, outermost first (not counting ROOT)
+    track_ids: tuple[str, ...]  # Rekordbox TrackIDs, in playlist order
 
 
 class RekordboxParseError(ValueError):
@@ -118,3 +126,25 @@ def parse_rekordbox_xml(xml_content: bytes):
         })
 
     return tracks
+
+
+def parse_rekordbox_playlists(xml_content: bytes) -> list[RekordboxPlaylist]:
+    """The playlists in the export's PLAYLISTS tree (folders are walked, not returned)."""
+    root = ET.fromstring(xml_content)
+    top = root.find("PLAYLISTS")
+    found: list[RekordboxPlaylist] = []
+
+    def walk(node, folders: tuple[str, ...]):
+        for child in node.findall("NODE"):
+            name = _text(child.attrib.get("Name")) or "(unnamed)"
+
+            if child.attrib.get("Type") == "0":  # a folder
+                walk(child, folders if not folders and name == "ROOT" else folders + (name,))
+            else:
+                keys = tuple(k for k in (t.attrib.get("Key") for t in child.findall("TRACK")) if k)
+                found.append(RekordboxPlaylist(name, folders, keys))
+
+    if top is not None:
+        walk(top, ())
+
+    return found

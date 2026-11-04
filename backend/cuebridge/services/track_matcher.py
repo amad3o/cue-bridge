@@ -44,6 +44,8 @@ class MatchResult:
     method: str  # "path", "file_name", "title_artist", "ambiguous" or "none"
     track: MusicTrack | None = None
     candidates: tuple[MusicTrack, ...] = ()
+    # Other Apple Music entries for the very same file (the library lists it twice).
+    same_file: tuple[MusicTrack, ...] = ()
 
 
 class AppleMusicIndex:
@@ -59,6 +61,10 @@ class AppleMusicIndex:
             self.by_file_name.setdefault(_file_name(track.path), []).append(track)
             self.by_title.setdefault(normalize_text(track.title), []).append(track)
 
+    def duplicate_files(self) -> list[tuple[MusicTrack, ...]]:
+        """Groups of Apple Music entries that point at the same file."""
+        return [tuple(group) for path, group in self.by_path.items() if path and len(group) > 1]
+
     def match(self, track: Track) -> MatchResult:
         for lookup in (self._by_path, self._by_file_name, self._by_title_and_artist):
             result = lookup(track)
@@ -71,7 +77,7 @@ class AppleMusicIndex:
     def _by_path(self, track: Track) -> MatchResult | None:
         found = self.by_path.get(normalize_path(track.filePath), []) if track.filePath else []
 
-        return MatchResult("path", found[0]) if len(found) == 1 else None
+        return MatchResult("path", found[0], same_file=tuple(found[1:])) if found else None
 
     def _choose(self, method: str, candidates: list[MusicTrack], track: Track) -> MatchResult | None:
         if not candidates:

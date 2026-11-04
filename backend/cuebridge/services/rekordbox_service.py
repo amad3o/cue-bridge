@@ -8,11 +8,16 @@ Track models or raises a LibraryError subclass.
 import threading
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from cuebridge.models import Track
-from cuebridge.parsers.rekordbox_parser import RekordboxParseError, parse_rekordbox_xml
+from cuebridge.parsers.rekordbox_parser import (
+    RekordboxParseError,
+    RekordboxPlaylist,
+    parse_rekordbox_playlists,
+    parse_rekordbox_xml,
+)
 
 MAX_FILE_BYTES = 100 * 1024 * 1024  # 100 MB
 MAX_CACHED_LIBRARIES = 4
@@ -100,6 +105,7 @@ class RekordboxLibrary:
     path: Path
     tracks: list[Track]
     tracks_by_id: dict[str, Track]
+    playlists: list[RekordboxPlaylist] = field(default_factory=list)
 
 
 # Resolved path -> ((mtime_ns, size) when parsed, library). Oldest entry first.
@@ -152,10 +158,12 @@ def get_rekordbox_library(path: str | Path) -> RekordboxLibrary:
 
 
 def _build_library(file_path: Path, resolved: Path) -> RekordboxLibrary:
-    tracks = parse_rekordbox_file(file_path)
+    contents = read_library_bytes(file_path)
+    tracks = parse_rekordbox_bytes(contents)
 
     return RekordboxLibrary(
         path=resolved,
         tracks=tracks,
         tracks_by_id={track.trackId: track for track in tracks},
+        playlists=parse_rekordbox_playlists(contents),
     )
