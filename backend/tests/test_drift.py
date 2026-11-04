@@ -84,6 +84,7 @@ def libraries(tmp_path):
             music_track(3, "B", "X", "/Music/b.mp3"),  # the same file listed again
             music_track(4, "D", "X", "/Music/d.mp3"),  # not in Rekordbox
             music_track(5, "E", "X", "/Music/e.mp3"),
+            music_track(6, "F", "X", "/Music/f.mp3"),  # in no playlist
         ],
         [playlist("Set", 1, 2), playlist("Warm", 2, 4, 5), playlist("OnlyApple", 1)],
     ))
@@ -109,6 +110,7 @@ class TestCompare:
 
         assert result.matched == 3 and result.ambiguous == []
         assert [t.title for t in result.apple_only] == ["D"]
+        assert [t.title for t in result.apple_only_unplaylisted] == ["F"]
         assert [t.trackTitle for t in result.rekordbox_only] == ["Lost", "Kick"]
         assert [t.trackTitle for t in result.rekordbox_only_in_music_folder] == ["Lost"]
         assert [[t.track_id for t in g] for g in result.duplicate_entries] == [[2, 3]]
@@ -159,6 +161,7 @@ class TestTools:
                 music_track(1, "A", "X", "/Music/a.mp3"), music_track(2, "B", "X", "/Music/b.mp3"),
                 music_track(3, "B", "X", "/Music/b.mp3"), music_track(4, "D", "X", "/Music/d.mp3"),
                 music_track(5, "E", "X", "/Music/e.mp3"),
+                music_track(6, "F", "X", "/Music/f.mp3"),
             ],
             [playlist("Set", 1, 2), playlist("Warm", 2, 4, 5), playlist("OnlyApple", 1)],
         )
@@ -169,6 +172,7 @@ class TestTools:
         result = server.compare_libraries()
 
         assert (result["matched"], result["inAppleMusicOnly"], result["inRekordboxOnly"]) == (3, 1, 2)
+        assert result["inAppleMusicOnlyButInNoPlaylist"] == 1 and "ignored" in result["summary"]
         assert result["inRekordboxOnlyButInAppleMusicsFolder"] == 1 and result["appleMusicFilesListedTwice"] == 1
         assert result["playlists"] == {
             "inAppleMusic": 3, "inSync": 1, "differ": 1, "missingInRekordbox": 1, "inRekordboxOnly": ["Extra"],
@@ -181,6 +185,8 @@ class TestTools:
         every_rb = server.list_library_differences("in_rekordbox_only", music_folder_only=False)
 
         assert [t["title"] for t in only_apple["items"]] == ["D"]
+        everything = server.list_library_differences("in_apple_music_only", include_unplaylisted=True)
+        assert [t["title"] for t in everything["items"]] == ["D", "F"]
         assert [t["title"] for t in only_rb["items"]] == ["Lost"]
         assert [t["title"] for t in every_rb["items"]] == ["Lost", "Kick"]
 

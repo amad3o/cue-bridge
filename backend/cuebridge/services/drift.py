@@ -2,7 +2,8 @@
 
 Tracks are paired with the matcher (path, file name, then title and artist).
 A Rekordbox track with no clear Apple Music counterpart is "Rekordbox only",
-an Apple Music track no Rekordbox track maps to is "Apple Music only", and a
+an Apple Music track in a playlist that no Rekordbox track maps to is "Apple Music
+only" (tracks in no playlist are kept apart: they aren't meant for Rekordbox), and a
 playlist is compared by name and then by the tracks it holds (not their order).
 """
 
@@ -31,7 +32,8 @@ class PlaylistDrift:
 @dataclass
 class LibraryDrift:
     matched: int = 0
-    apple_only: list[MusicTrack] = field(default_factory=list)
+    apple_only: list[MusicTrack] = field(default_factory=list)  # in a playlist, but not in Rekordbox
+    apple_only_unplaylisted: list[MusicTrack] = field(default_factory=list)  # not in Rekordbox, but in no playlist
     rekordbox_only: list[Track] = field(default_factory=list)
     rekordbox_only_in_music_folder: list[Track] = field(default_factory=list)
     ambiguous: list[tuple[Track, tuple[MusicTrack, ...]]] = field(default_factory=list)
@@ -98,7 +100,12 @@ def compare_libraries(
             if folder and normalize_path(track.filePath).startswith(folder):
                 drift.rekordbox_only_in_music_folder.append(track)
 
-    drift.apple_only = [t for t in music.tracks if t.track_id not in rb_for_apple]
+    playlisted = {i for p in music.user_playlists if not p.is_folder for i in p.track_ids}
+
+    for track in music.tracks:
+        if track.track_id not in rb_for_apple:
+            (drift.apple_only if track.track_id in playlisted else drift.apple_only_unplaylisted).append(track)
+
     drift.duplicate_entries = index.duplicate_files()
 
     rb_tracks = {t.trackId: t for t in rekordbox_tracks}

@@ -231,6 +231,7 @@ def compare_libraries() -> dict:
         "appleMusicTracks": len(music.tracks),
         "matched": result.matched,
         "inAppleMusicOnly": len(result.apple_only),
+        "inAppleMusicOnlyButInNoPlaylist": len(result.apple_only_unplaylisted),
         "inRekordboxOnly": len(result.rekordbox_only),
         "inRekordboxOnlyButInAppleMusicsFolder": len(result.rekordbox_only_in_music_folder),
         "ambiguous": len(result.ambiguous),
@@ -256,8 +257,8 @@ def compare_libraries() -> dict:
         ],
     }
     summary["summary"] = (
-        f"{result.matched} Rekordbox tracks are in Apple Music; {len(result.apple_only)} Apple Music tracks "
-        f"are not in Rekordbox and {len(result.rekordbox_only)} Rekordbox tracks are not in Apple Music. "
+        f"{result.matched} Rekordbox tracks are in Apple Music; {len(result.apple_only)} playlisted Apple Music tracks "
+        f"are not in Rekordbox ({len(result.apple_only_unplaylisted)} more are in no playlist and ignored) and {len(result.rekordbox_only)} Rekordbox tracks are not in Apple Music. "
         f"{statuses['in_sync']} of {len(result.playlists)} playlists are in sync."
     )
     return summary
@@ -269,6 +270,7 @@ def list_library_differences(
     kind: str,
     playlist: str | None = None,
     music_folder_only: bool = True,
+    include_unplaylisted: bool = False,
     limit: int = 25,
     offset: int = 0,
 ) -> dict:
@@ -282,6 +284,9 @@ def list_library_differences(
     `music_folder_only` (default true): for "in_rekordbox_only" over the whole
     library, list only files inside Apple Music's music folder. The rest are
     usually things that were never in Apple Music (sample packs and the like).
+    `include_unplaylisted` (default false): "in_apple_music_only" lists only
+    tracks that are in some Apple Music playlist, since those are the ones meant
+    for Rekordbox; set it to also list tracks that are in no playlist.
     `limit` is capped at 100.
     """
     result = _drift()
@@ -302,7 +307,7 @@ def list_library_differences(
 
             source = match.apple_only if kind == "in_apple_music_only" else match.rekordbox_only
         elif kind == "in_apple_music_only":
-            source = result.apple_only
+            source = result.apple_only + result.apple_only_unplaylisted if include_unplaylisted else result.apple_only
         else:
             source = result.rekordbox_only_in_music_folder if music_folder_only else result.rekordbox_only
 
