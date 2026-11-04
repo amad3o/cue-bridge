@@ -8,7 +8,11 @@ from mcp import Client
 from mcp.server.mcpserver.exceptions import ToolError
 
 from cuebridge import mcp_server as server
+from cuebridge.parsers.serato_markers import CueEntry
+from cuebridge.parsers.serato_tags import read_cues
+from cuebridge.services import serato_sync
 from cuebridge.services.rekordbox_service import clear_cache
+from serato_helpers import AUDIO_INFO_NO_LAME, AUDIO_WITH_LAME, BPMLOCK, COLOR, make_mp3, make_wav
 
 FIXTURE = Path(__file__).parent / "fixtures" / "rekordbox_sample.xml"
 
@@ -50,12 +54,14 @@ class TestRegistration:
             "find_tracks_without_cues",
             "set_default_cue",
             "duplicate_memory_cues_to_hot_cues",
+            "sync_cues_to_serato",
+            "undo_serato_sync",
         }
 
     def test_only_the_writing_tools_are_marked_as_writing(self):
         tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
 
-        for name in ("set_default_cue", "duplicate_memory_cues_to_hot_cues"):
+        for name in ("set_default_cue", "duplicate_memory_cues_to_hot_cues", "sync_cues_to_serato", "undo_serato_sync"):
             assert tools[name].annotations.read_only_hint is False
             # They edit the loaded file in place (after a backup), so clients should confirm.
             assert tools[name].annotations.destructive_hint is True
@@ -119,6 +125,7 @@ class TestReadTools:
             lambda: server.find_tracks_without_cues(),
             lambda: server.set_default_cue(),
             lambda: server.duplicate_memory_cues_to_hot_cues(),
+            lambda: server.sync_cues_to_serato(),
         ],
     )
     def test_require_a_loaded_library(self, call):
@@ -341,3 +348,138 @@ class TestBothToolsEditTheSameFile:
 
         assert result["dryRun"] is False
         assert "Midnight Run2" in Path(loaded).read_text(encoding="utf-8")
+
+
+class TestSyncToSerato:
+    """The tools that edit the audio files. Real tags on throwaway files; Serato is never 'running'."""
+
+    @pytest.fixture(autouse=True)
+    def safe_environment(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CUEBRIDGE_HOME", str(tmp_path / "cuebridge-home"))
+        monkeypatch.setattr(serato_sync, "is_serato_running", lambda: False)
+
+    @pytest.fixture
+    def library(self, tmp_path):
+        """A Rekordbox library of two tracks, each with a real Serato-tagged file, and one with no file."""
+        wav = make_wav(tmp_path / "one.wav", [COLOR, CueEntry(0, 500, "#cc0000"), BPMLOCK])
+        mp3 = make_mp3(tmp_path / "two.mp3", [COLOR, BPMLOCK], audio=AUDIO_WITH_LAME)
+        xml = tmp_path / "rekordbox.xml"
+        xml.write_text(
+            "<DJ_PLAYLISTS><COLLECTION>"
+            f'<TRACK TrackID="1" Name="One" Artist="A" Location="file://localhost{wav}">'
+            '<POSITION_MARK Name="Drop" Type="0" Start="12.345" Num="0" Red="40" Green="226" Blue="20"/>'
+            '<POSITION_MARK Type="0" Start="30.5" Num="-1"/></TRACK>'
+            f'<TRACK TrackID="2" Name="Two" Artist="B" Location="file://localhost{mp3}">'
+            '<POSITION_MARK Type="0" Start="1.0" Num="0"/></TRACK>'
+            '<TRACK TrackID="3" Name="Three" Artist="C" Location="file://localhost/nowhere/three.mp3">'
+            '<POSITION_MARK Type="0" Start="2.0" Num="0"/></TRACK>'
+            "</COLLECTION></DJ_PLAYLISTS>"
+        )
+        server.load_rekordbox_library(str(xml))
+        return {"wav": wav, "mp3": mp3, "xml": xml}
+
+    def test_a_dry_run_is_the_default_and_changes_nothing(self, library):
+        before = {k: v.read_bytes() for k, v in library.items()}
+
+        result = server.sync_cues_to_serato()
+
+        assert result["dryRun"] is True
+        assert result["filesToChange"] == 2 and result["filesSkipped"] == 1
+        assert result["skippedBecause"] == {"the file wasn't found at the Rekordbox path": 1}
+        assert "Nothing has been written" in result["summary"]
+        assert {k: v.read_bytes() for k, v in library.items()} == before
+        assert not serato_sync.journal_dir().exists()
+
+    def test_the_preview_shows_before_and_after(self, library):
+        example = next(e for e in server.sync_cues_to_serato()["examples"] if e["title"] == "One")
+
+        assert example["seratoNow"] == "1: 0:00.500"
+        assert example["afterSync"] == "1: 0:12.345, 2: 0:30.500"
+
+    def test_applying_requires_the_file_count_from_the_dry_run(self, library):
+        before = library["wav"].read_bytes()
+
+        with pytest.raises(ToolError, match="expected_files"):
+            server.sync_cues_to_serato(dry_run=False)
+
+        with pytest.raises(ToolError, match="would change 2 files, but expected_files was 5"):
+            server.sync_cues_to_serato(dry_run=False, expected_files=5)
+
+        assert library["wav"].read_bytes() == before
+
+    def test_applying_writes_verifies_and_reports_the_journal(self, library):
+        result = server.sync_cues_to_serato(dry_run=False, expected_files=2)
+
+        assert result["filesWritten"] == 2 and result["filesThatFailedAndWereRestored"] == []
+        assert Path(result["journal"]).exists() and "undo_serato_sync" in result["summary"]
+        assert [(c.index, c.position_ms) for c in read_cues(library["wav"])] == [(0, 12345), (1, 30500)]
+        assert [(c.index, c.position_ms) for c in read_cues(library["mp3"])] == [(0, 995)]
+
+    def test_running_it_again_finds_nothing_to_do(self, library):
+        server.sync_cues_to_serato(dry_run=False, expected_files=2)
+
+        again = server.sync_cues_to_serato()
+
+        assert again["filesToChange"] == 0 and again["filesAlreadyUpToDate"] == 2
+        assert "No Serato file needs to change" in again["summary"]
+
+    def test_serato_running_is_reported_and_blocks_the_write(self, library, monkeypatch):
+        monkeypatch.setattr(serato_sync, "is_serato_running", lambda: True)
+        before = library["wav"].read_bytes()
+
+        preview = server.sync_cues_to_serato()
+        assert preview["seratoIsRunning"] is True and "quit it" in preview["summary"]
+
+        with pytest.raises(ToolError, match="Serato DJ Pro is running"):
+            server.sync_cues_to_serato(dry_run=False, expected_files=2)
+
+        assert library["wav"].read_bytes() == before
+
+    def test_it_can_be_limited_to_some_tracks(self, library):
+        result = server.sync_cues_to_serato(track_ids=["2"])
+
+        assert result["filesToChange"] == 1 and result["filesSkipped"] == 0
+
+    def test_memory_cues_can_be_excluded(self, library):
+        result = server.sync_cues_to_serato(include_memory_cues=False, track_ids=["1"])
+
+        assert result["examples"][0]["afterSync"] == "1: 0:12.345"
+
+    def test_unverified_timing_is_reported(self, library, tmp_path):
+        odd = make_mp3(tmp_path / "odd.mp3", [COLOR, BPMLOCK], audio=AUDIO_INFO_NO_LAME)
+        library["xml"].write_text(
+            "<DJ_PLAYLISTS><COLLECTION>"
+            f'<TRACK TrackID="9" Name="Odd" Artist="X" Location="file://localhost{odd}">'
+            '<POSITION_MARK Type="0" Start="1.0" Num="0"/></TRACK></COLLECTION></DJ_PLAYLISTS>'
+        )
+        os.utime(library["xml"], (1, 1))
+
+        result = server.sync_cues_to_serato()
+
+        assert result["timingNotVerified"][0]["title"] == "Odd"
+        assert "26 ms" in result["timingNotVerified"][0]["note"]
+
+    def test_undo_restores_the_files(self, library):
+        original = {k: library[k].read_bytes() for k in ("wav", "mp3")}
+        synced = server.sync_cues_to_serato(dry_run=False, expected_files=2)
+
+        preview = server.undo_serato_sync()
+        assert preview["dryRun"] is True and preview["filesThatWouldBeRestored"] == 2
+        assert library["wav"].read_bytes() != original["wav"]
+
+        done = server.undo_serato_sync(journal=synced["journal"], dry_run=False)
+
+        assert done["filesRestored"] == 2 and done["filesLeftAlone"] == []
+        assert {k: library[k].read_bytes() for k in ("wav", "mp3")} == original
+
+    def test_undo_with_no_journal(self, library):
+        with pytest.raises(ToolError, match="no sync journal"):
+            server.undo_serato_sync()
+
+    def test_undo_uses_the_latest_journal_by_default(self, library):
+        original = library["wav"].read_bytes()
+        server.sync_cues_to_serato(dry_run=False, expected_files=2)
+
+        server.undo_serato_sync(dry_run=False)
+
+        assert library["wav"].read_bytes() == original

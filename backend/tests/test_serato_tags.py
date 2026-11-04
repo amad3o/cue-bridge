@@ -1,52 +1,18 @@
-import wave
-
 import pytest
-from mutagen.id3 import GEOB, ID3, TIT2
-from mutagen.wave import WAVE
+from mutagen.id3 import GEOB, ID3
 
 from cuebridge.parsers import serato_markers as m
-from cuebridge.parsers.serato_markers import CueEntry, RawEntry
-from cuebridge.parsers.serato_tags import UnsupportedFileError, read_cues, read_markers2
+from cuebridge.parsers.serato_markers import CueEntry
+from cuebridge.parsers.serato_tags import (
+    UnsupportedFileError,
+    locate_markers2,
+    read_cues,
+    read_markers2,
+)
+from serato_helpers import BPMLOCK, COLOR, make_mp3, make_wav
 
-COLOR = RawEntry("COLOR", bytes.fromhex("00ffffff"))
-BPMLOCK = RawEntry("BPMLOCK", b"\x00")
 CUES = [CueEntry(0, 235, "#cc0000"), CueEntry(1, 581, "#00cc00", "Drop")]
 ENTRIES = [COLOR, *CUES, BPMLOCK]
-
-
-def geob(entries) -> GEOB:
-    return GEOB(
-        encoding=0, mime="application/octet-stream", filename="",
-        desc=m.DESCRIPTION, data=m.encode_markers2(entries),
-    )
-
-
-def make_mp3(path, entries=None, title="Song"):
-    """A file with an ID3v2.4 tag (and no audio, which is enough for reading tags)."""
-    tags = ID3()
-    tags.add(TIT2(encoding=3, text=title))
-
-    if entries is not None:
-        tags.add(geob(entries))
-
-    tags.save(path, v2_version=4)
-    return path
-
-
-def make_wav(path, entries=None):
-    with wave.open(str(path), "wb") as handle:
-        handle.setnchannels(1)
-        handle.setsampwidth(2)
-        handle.setframerate(44100)
-        handle.writeframes(b"\x00\x00" * 4410)
-
-    if entries is not None:
-        wav = WAVE(path)
-        wav.add_tags()
-        wav.tags.add(geob(entries))
-        wav.save()
-
-    return path
 
 
 @pytest.fixture(params=["mp3", "wav"])
@@ -130,3 +96,82 @@ class TestErrors:
         make_mp3(path, ENTRIES)
 
         assert read_cues(path) == CUES
+
+
+class TestLocating:
+    def test_finds_the_exact_bytes_in_both_formats(self, make_file):
+        path = make_file(ENTRIES)
+
+        location = locate_markers2(path)
+
+        assert location.length == m.FRAME_SIZE
+        assert path.read_bytes()[location.offset : location.offset + location.length] == location.data
+        assert m.decode_markers2(location.data) == ENTRIES
+
+    def test_no_tag_means_none(self, make_file):
+        assert locate_markers2(make_file(None)) is None
+
+    def test_plain_files_have_nothing_to_locate(self, tmp_path):
+        mp3 = tmp_path / "plain.mp3"
+        mp3.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 100)
+
+        assert locate_markers2(mp3) is None
+        assert locate_markers2(make_wav(tmp_path / "plain.wav")) is None
+
+    def test_works_on_id3v23_tags(self, tmp_path):
+        path = make_mp3(tmp_path / "v23.mp3", ENTRIES, version=3)
+
+        location = locate_markers2(path)
+
+        assert m.decode_markers2(location.data) == ENTRIES
+        assert path.read_bytes()[location.offset : location.offset + location.length] == location.data
+
+    def test_overwriting_the_located_bytes_is_seen_by_mutagen(self, make_file):
+        path = make_file(ENTRIES)
+        location = locate_markers2(path)
+        new = m.encode_markers2([COLOR, CueEntry(3, 99_000, "#00cccc"), BPMLOCK])
+
+        with open(path, "r+b") as handle:
+            handle.seek(location.offset)
+            handle.write(new)
+
+        assert read_cues(path) == [CueEntry(3, 99_000, "#00cccc")]
+
+    def test_refuses_unsynchronised_tags(self, tmp_path):
+        path = make_mp3(tmp_path / "unsync.mp3", ENTRIES)
+        data = bytearray(path.read_bytes())
+        data[5] |= 0x80
+        path.write_bytes(bytes(data))
+
+        with pytest.raises(UnsupportedFileError, match="unsynchronised"):
+            locate_markers2(path)
+
+    def test_refuses_a_frame_with_compression_or_other_flags(self, tmp_path):
+        path = make_mp3(tmp_path / "flags.mp3", ENTRIES)
+        offset = locate_markers2(path).offset
+        data = bytearray(path.read_bytes())
+        # frame header = 10 bytes before the frame body; the body has a 43-byte prefix before the payload
+        data[offset - 43 - 10 + 9] |= 0x08
+        path.write_bytes(bytes(data))
+
+        with pytest.raises(UnsupportedFileError, match="compressed"):
+            locate_markers2(path)
+
+    def test_refuses_other_formats(self, tmp_path):
+        path = tmp_path / "song.m4a"
+        path.write_bytes(b"x")
+
+        with pytest.raises(UnsupportedFileError, match="only MP3 and WAV"):
+            locate_markers2(path)
+
+    def test_a_wav_that_is_not_a_wav(self, tmp_path):
+        path = tmp_path / "bad.wav"
+        path.write_bytes(b"not a wav at all")
+
+        with pytest.raises(UnsupportedFileError, match="Not a WAV"):
+            locate_markers2(path)
+
+    def test_a_tag_without_serato_frames(self, tmp_path):
+        path = make_mp3(tmp_path / "other.mp3", None)
+
+        assert locate_markers2(path) is None

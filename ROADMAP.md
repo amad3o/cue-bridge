@@ -97,11 +97,16 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 - [x] Decide on the Serato input: read cues from audio-file tags; use `database V2` only to list tracks.
 - [x] Decode `Markers2` and prove the format against real data (read side).
 - [x] Codec (`parsers/serato_markers.py`) and a read-only tag reader (`parsers/serato_tags.py`, MP3 and WAV via mutagen) with tests. Validated on the real library: all 1,541 tags decode and re-encode byte for byte, covering 365 cues in 241 files, with no cue needing the raw-bytes fallback. A cue the codec can't reproduce exactly is kept verbatim as a `RawEntry`, so a rewrite can never silently alter it.
-- [ ] Tag *writer*: put the new `Markers2` frame into a file while keeping every other frame, with backup, atomic replace and read-back verification.
-- [ ] Per-format timing offset (WAV 0 ms, MP3 by header type), calibrated on the existing Lexicon-synced pairs.
+- [x] Tag writer (`services/serato_sync.py`): overwrites the fixed 470-byte payload in place (located by `locate_markers2`, checked against mutagen on all 1,541 real files), so nothing else in the file moves. A write-ahead journal in `~/.cuebridge/undo/` stores the original bytes, every write is read back (the rest of the file must hash identically), failures are restored at once, and `undo_sync` reverses a run. File mtime is preserved. Refuses while Serato DJ Pro is running.
+- [x] "Change only what differs": a Serato cue within 1 ms of the computed one (30 ms where timing is unverified) keeps its exact bytes and color; colors come from Rekordbox, then the existing slot, then a default. On the real library 38 of 39 cued files already match; only `FODDER 001` (3 cues in Rekordbox, 1 in Serato) would change.
+- [ ] Add a missing `Serato Markers2` frame to files that have none (needs a tag rewrite, not an in-place overwrite). Currently skipped with "load the track in Serato once".
+- [ ] M4A, AIFF and FLAC (Serato stores its data differently there).
+- [ ] Hot loops and cue names in Serato's `LOOP` entries (none exist in the sample library).
+- [x] Per-format timing offset (`services/cue_timing.py`): WAV 0 ms, MP3 -5.5 ms (LAME header or no Xing/Info frame), MP3 with an Xing/Info frame but no LAME tag left uncorrected and flagged. Round half up. Predicts the 95 real Lexicon-synced cues on measured files to within 1 ms (67 exact).
 - [ ] Collect small real Serato-tagged fixtures for tests (done for one MP3; need a WAV with cues).
-- [ ] Write the legacy `Serato Markers_` frame consistently, or confirm Serato ignores it.
-- [ ] Tool: `load_serato_library(path)` / `read_serato_cues(...)`.
+- [ ] Write the legacy `Serato Markers_` frame consistently, or confirm Serato ignores it. Not written yet: files carry both, so a synced file's two copies of the cues now disagree. Test one file in Serato.
+- [ ] Tool: `load_serato_library(path)` / `read_serato_cues(...)` to read and compare Serato cues without writing.
+- [x] Tools `sync_cues_to_serato` (dry run by default, `expected_files` must match the dry run) and `undo_serato_sync`.
 - [ ] Confirm in Serato that a file we wrote shows the right cues. Only the user can do this.
 
 ### 4. Compare
@@ -114,7 +119,7 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 
 - [ ] Cue color and slot mapping between the two systems.
 - [ ] Serato to Rekordbox: generate a Rekordbox XML with `POSITION_MARK`s. This writes a new file and leaves the user's library alone.
-- [ ] Rekordbox to Serato: write cues into Serato tags in audio files.
+- [x] Rekordbox to Serato: write cues into Serato tags in audio files (see section 3).
 - [ ] **Safety before any write to audio files:**
   - every write tool defaults to `dry_run=True` and returns a preview
   - a dry run saves a pending plan and returns a plan ID with a text summary and diff
@@ -146,6 +151,20 @@ Only start this once sections 1–5 work end to end. Decide then, based on how o
 - [ ] Fix the UI bugs listed above (search-box arrow keys, stable row keys, sort direction, API base URL from an env variable).
 - [ ] Bind the server to `127.0.0.1` only, and protect apply actions with a one-time token in the URL, so no other local page or process can trigger a write.
 
+### Not yet verified
+
+Things that are built and tested in code but have never been checked in the real application. Most need the user, because only they can run Rekordbox and Serato.
+
+- [ ] **Serato accepts a file CueBridge wrote.** The writer reproduces Serato's tag layout byte for byte (1,541 real tags) and verifies each write by reading it back, but no file has been opened in Serato. Test on a copy of one track: sync, quit Serato, reopen, and check the cues show in the right slots, colors and positions.
+- [ ] **The legacy `Serato Markers_` frame.** Files carry a second, older copy of the cues that the sync does not update, so a synced file's two copies disagree. Find out from the Serato test above whether it matters. If it does, decode and rewrite that frame too.
+- [ ] **Importing an edited Rekordbox XML back into Rekordbox.** Does it add the hot cues to tracks already in the collection, or only add new tracks? Affects `set_default_cue` and `duplicate_memory_cues_to_hot_cues`. Back up Rekordbox first. If it does not update existing tracks, the XML tools are only useful as input for the Serato sync.
+- [ ] **The Rekordbox XML marker comment** (`<!-- Edited by CueBridge. -->`) is accepted by Rekordbox's importer. It is valid XML, but untested.
+- [ ] **MP3 timing for files with an Xing/Info frame but no LAME tag.** Left uncorrected and flagged, based on three files that differed by about 26 ms. Measure more files, or confirm the cause, before correcting them.
+- [ ] **The MP3 offset of 5.5 ms** was fitted on Lexicon-synced pairs from one library. It matches 95 cues to within 1 ms, but confirm by ear or with a beat grid on a few tracks.
+- [ ] **Claude Desktop.** The README describes registering the server there, but only Claude Code has been tried.
+- [ ] **Other Python versions.** Tested on 3.13 only; the dependencies declare 3.10 or newer.
+- [ ] **First run on the real library.** Dry run, then a real sync of one or two tracks (Serato closed), then the rest. The journal makes it reversible.
+
 ### Later
 
 - Support other platforms (Traktor NML, Engine DJ).
@@ -155,4 +174,4 @@ Only start this once sections 1–5 work end to end. Decide then, based on how o
 
 ## Suggested next step
 
-Section 2 is built apart from registering the server in Claude. Do that and try the tools on a real library, including the open question about importing the edited XML back into Rekordbox. Then start Serato (section 3), the riskiest part. The UI (section 7) waits until the text workflow is complete.
+Check one synced file in Serato itself: copy a track with the `FODDER 001` kind of difference, point a Rekordbox cue at it, sync, quit Serato, then open the copy and see whether the cues show. That is the only test the codec and writer cannot do for themselves, and it also answers whether the legacy `Serato Markers_` frame needs writing. After that: matching tracks whose files moved (section 4), then the optional review UI (section 7).

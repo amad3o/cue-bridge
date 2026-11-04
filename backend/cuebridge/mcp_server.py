@@ -13,7 +13,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cuebridge.services import library_queries, rekordbox_editor
+from cuebridge.services import library_queries, rekordbox_editor, serato_sync
 from cuebridge.services.rekordbox_service import (
     LibraryError,
     RekordboxLibrary,
@@ -31,7 +31,10 @@ mcp = MCPServer(
         "duplicate_memory_cues_to_hot_cues) edit the loaded XML file itself, "
         "after saving a backup of a fresh Rekordbox export. They default to a "
         "dry run: always show the user what would change, and get their "
-        "go-ahead, before calling them with dry_run=false."
+        "go-ahead, before calling them with dry_run=false. "
+        "sync_cues_to_serato goes further and edits the user's audio files: "
+        "Serato DJ Pro must be closed, and dry_run=false needs expected_files "
+        "from the dry run. undo_serato_sync reverses it."
     ),
 )
 
@@ -282,6 +285,144 @@ def duplicate_memory_cues_to_hot_cues(output_path: str | None = None, dry_run: b
     return _finish_edit(
         plan, result, count, f"add {plan.cues_added} hot cues to {count} tracks", dry_run
     )
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+    )
+)
+@_translate_errors
+def sync_cues_to_serato(
+    dry_run: bool = True,
+    expected_files: int | None = None,
+    track_ids: list[str] | None = None,
+    include_memory_cues: bool = True,
+) -> dict:
+    """Copy the loaded Rekordbox library's cues into the Serato tags of the audio files.
+
+    Rekordbox wins: for every track that has cues in Rekordbox, the hot cues in
+    the file's Serato tag are replaced by the Rekordbox hot cues (same slots),
+    plus the memory cues in the free slots when include_memory_cues is true.
+    Positions get the timing correction for the file type. Tracks with no cues
+    in Rekordbox are never touched. MP3 and WAV only.
+
+    This edits the user's audio files, so be careful:
+    - Call it with dry_run=true first (the default). It changes nothing and
+      reports how many files would change, which are skipped and why, and which
+      files had a timing correction it could not verify.
+    - Show the user that summary and get their go-ahead. Then call again with
+      dry_run=false and expected_files set to the "filesToChange" number from
+      the dry run. If the number no longer matches, nothing is written.
+    - Serato DJ Pro must be closed, otherwise it can overwrite the change. The
+      dry run reports whether it is running.
+    - Only the 470-byte cue tag is overwritten. The original bytes are saved to
+      a journal first, each file is read back to check nothing else changed, a
+      file that fails the check is restored at once, and undo_serato_sync
+      reverses a whole run.
+
+    `track_ids` limits the sync to some tracks (IDs from search_tracks).
+    """
+    library = _require_library()
+    plan = serato_sync.build_sync_plan(
+        library.tracks, track_ids=track_ids, include_memory_cues=include_memory_cues
+    )
+
+    changes = plan.to_change
+    running = serato_sync.is_serato_running()
+
+    result = {
+        "dryRun": dry_run,
+        "filesToChange": len(changes),
+        "filesAlreadyUpToDate": len(plan.with_status("unchanged")),
+        "filesSkipped": len(plan.with_status("skip")),
+        "skippedBecause": dict(plan.skip_reasons),
+        "seratoIsRunning": running,
+        "loopsIgnored": plan.loops_ignored,
+        "tracksNotPlannedBecauseOfTheFileLimit": plan.not_planned,
+        "timingNotVerified": [
+            {"title": i.title, "artist": i.artist, "note": i.timing.note} for i in plan.flagged_timing[:10]
+        ],
+        "examples": [
+            {
+                "title": i.title,
+                "artist": i.artist,
+                "file": str(i.path),
+                "seratoNow": serato_sync.describe_times(i.before),
+                "afterSync": serato_sync.describe_times(i.after),
+            }
+            for i in changes[:5]
+        ],
+    }
+
+    if not changes:
+        result["summary"] = "No Serato file needs to change, and nothing was written."
+        return result
+
+    warning = " Serato DJ Pro is running; quit it before applying." if running else ""
+
+    if dry_run:
+        result["summary"] = (
+            f"Would update the cues in {len(changes)} audio files (Rekordbox wins). "
+            f"{len(plan.with_status('unchanged'))} already match and {len(plan.with_status('skip'))} are skipped. "
+            f"Nothing has been written.{warning}"
+        )
+        return result
+
+    if expected_files != len(changes):
+        raise ToolError(
+            f"This would change {len(changes)} files, but expected_files was {expected_files!r}. "
+            "Run a dry run, show the user the number, and pass it as expected_files."
+        )
+
+    outcome = serato_sync.apply_sync_plan(plan)
+
+    result["filesWritten"] = len(outcome.verified)
+    result["filesThatFailedAndWereRestored"] = [
+        {"title": i.title, "file": str(i.path), "problem": why} for i, why in outcome.failed
+    ]
+    result["journal"] = str(outcome.journal)
+    result["summary"] = (
+        f"Updated and verified the cues in {len(outcome.verified)} audio files"
+        + (f"; {len(outcome.failed)} failed and were left as they were" if outcome.failed else "")
+        + f". To reverse this, call undo_serato_sync (journal: {outcome.journal})."
+    )
+    return result
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+    )
+)
+@_translate_errors
+def undo_serato_sync(journal: str | None = None, dry_run: bool = True) -> dict:
+    """Reverse a sync_cues_to_serato run by putting back the original cue bytes.
+
+    `journal` is the journal path the sync reported; by default the most recent
+    one. A file whose cue tag was changed again afterwards (for example by Serato)
+    is left alone. `dry_run` is true by default and only reports what would be
+    restored; ask the user before calling it with dry_run=false. Serato DJ Pro
+    must be closed.
+    """
+    path = Path(journal).expanduser() if journal else serato_sync.latest_journal()
+
+    if path is None:
+        raise ToolError("There is no sync journal to undo.")
+
+    outcome = serato_sync.undo_sync(path, dry_run=dry_run)
+
+    return {
+        "dryRun": dry_run,
+        "journal": str(path),
+        "filesRestored" if not dry_run else "filesThatWouldBeRestored": len(outcome.restored),
+        "filesAlreadyOriginal": len(outcome.already_original),
+        "filesLeftAlone": [{"file": f, "why": why} for f, why in outcome.skipped],
+        "summary": (
+            f"{'Would restore' if dry_run else 'Restored'} the original cues in {len(outcome.restored)} files; "
+            f"{len(outcome.already_original)} were already original and {len(outcome.skipped)} were left alone."
+        ),
+    }
 
 
 def main() -> None:
