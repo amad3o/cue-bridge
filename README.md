@@ -1,21 +1,20 @@
 # CueBridge
 
-CueBridge is a local-first tool for working with DJ cue points. It's an **MCP server**, so an AI assistant such as Claude can read your Rekordbox library, answer questions about your cues, and write edited copies of it. The goal is to move and compare cue points between **Rekordbox** and **Serato**.
+CueBridge is a local-first tool for managing a DJ library across **Apple Music**, **Rekordbox** and **Serato**. It's an **MCP server**, so an AI assistant such as Claude can read the libraries, compare them, and carefully make the changes that keep them in step. It is a personal tool, built around one setup: Apple Music holds the tracks and playlists, Rekordbox holds the cues and USB sets, and Serato plays from the Apple Music playlists.
 
 Everything runs on your own machine, and your library files are never uploaded anywhere.
 
 ## Status
 
-Early development. What works today:
+Early development, used on one real library. What works today:
 
-- Reading a Rekordbox XML export: tracks, hot cues, memory cues and loops, with colors and file paths.
-- Searching and paging through the library, and finding tracks with no cues.
-- Writing an **edited copy** of the XML with a default hot cue added to tracks that have none.
+- **Cues, Rekordbox to Serato.** Copies Rekordbox's hot and memory cues into the Serato tags of your MP3 and WAV files (both of Serato's cue frames, with the timing difference between the programs corrected), with Rekordbox winning, a journal and undo.
+- **Apple Music, live.** Reads tracks and playlists straight from the open Music app, with no export.
+- **Comparing the libraries.** Matches tracks across Apple Music and Rekordbox (by path, file name, then title and artist), and shows which tracks and playlists differ, which files moved, and which Apple Music files are listed twice.
+- **Playlists into Rekordbox.** Adds new tracks to your existing Rekordbox playlists by editing Rekordbox's database (Rekordbox closed; backup, verification and undo), and prepares new tracks and playlists for Rekordbox's XML import.
+- **Rekordbox XML.** Reads a Rekordbox export (tracks, cues, playlists), and has two editing tools for it (see the warning under their safety section).
 
-- Copying Rekordbox cues into the Serato tags of your MP3 and WAV files, with Rekordbox winning, a journal and undo.
-- Reading an Apple Music export (tracks and playlists), matching its tracks to Rekordbox's, finding files that moved, and comparing the two libraries (tracks and playlists).
-
-Not built yet: metadata and playlist-hygiene reports, writing playlists back, and M4A/AIFF support. See [ROADMAP.md](ROADMAP.md) for completed work, known issues and what's next.
+Not built yet: reading cues from Rekordbox's database (so no export is needed), comparing cues between the programs, metadata and playlist-hygiene reports, and M4A/AIFF cue support. See [ROADMAP.md](ROADMAP.md) for completed work, known issues and what's next.
 
 ## Setup
 
@@ -71,7 +70,11 @@ Results are paged (at most 100 per call) so large libraries don't flood the assi
 
 ### Safety of the writing tools (`set_default_cue`, `duplicate_memory_cues_to_hot_cues`)
 
-These two tools **edit your `rekordbox.xml` in place**. That file is an export, and Rekordbox itself is unaffected, but you can lose cues you added to it. So:
+These two tools **edit your `rekordbox.xml` in place**. That file is an export, and Rekordbox itself is unaffected, but you can lose cues you added to it.
+
+> **Known issue.** They rewrite the XML through an XML library and add a marker comment. Rekordbox stopped showing its `rekordbox xml` sidebar item for a file written that way, so it probably rejects their output. The playlist export no longer does this (it patches the text), and these two should follow. Until then, treat them as producing input for CueBridge's own tools, not for importing into Rekordbox.
+
+So:
 
 - **Dry run by default.** With `dry_run=true` they report what would change and whether a backup would be made, and write nothing. Ask the assistant to show you that first.
 - **Backup first.** The first edit to a file that came from Rekordbox saves a timestamped copy next to it (`rekordbox.xml.backup-20261103-121017`) and checks it is identical. Edited files carry a marker comment (`<!-- Edited by CueBridge. -->`), so later edits to the same file don't pile up more backups. A fresh export from Rekordbox is backed up again.
@@ -148,6 +151,12 @@ A synced WAV has been opened in Serato and shows the new cues; MP3s are checked 
 
 > Do a dry run of set_default_cue and show me what would change.
 
+> Load my Apple Music library and my Rekordbox export, and tell me which playlists differ.
+
+> Do a dry run of sync_playlists_to_rekordbox. (Then quit Rekordbox and apply it.)
+
+> Do a dry run of sync_cues_to_serato and show me which files would change.
+
 ## Development
 
 ```bash
@@ -161,8 +170,9 @@ Layout:
 ```
 backend/cuebridge/
   models.py        shared Pydantic models (Track, Cue)
-  parsers/         file formats to models
-  services/        path-based logic: validation, caching, queries, XML editing
+  parsers/         file formats to models (Rekordbox XML, Apple Music XML, Serato tags)
+  services/        path-based logic: loading and caching, queries and comparison, the Serato sync,
+                   Apple Music (file and live), Rekordbox XML edits, Rekordbox's database
   mcp_server.py    the MCP server (a thin layer over services/)
   web/main.py      FastAPI app used by the prototype web UI
 frontend/          React + TypeScript prototype UI
