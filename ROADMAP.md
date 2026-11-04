@@ -1,44 +1,44 @@
 # CueBridge Roadmap
 
-CueBridge is moving from a web UI to an **MCP server**. The goal is for an AI assistant such as Claude to read, compare and convert DJ cue points between Rekordbox and Serato by calling tools against files on the user's own machine.
+CueBridge is moving from a web UI to an **MCP server**. The goal is for an AI assistant such as Claude to read, compare and convert DJ cue points between Rekordbox and Serato, and to help manage the music library, by calling tools against files on the user's own machine.
 
 The parsing, matching and conversion logic stays in plain Python. The MCP server is a thin layer over it.
+
+**Audience and scope.** CueBridge is a personal tool, built around one library: Apple Music for tracks and playlists, Rekordbox for cues and USB sets, Serato for playing, with the music on an ExFAT drive. Claude Code is the MCP client. There are no plans for a command line, a standalone UI, or packaging for other people unless that changes. The scope is growing from syncing cues to **managing the music library as a whole** (section 8). A single user means the tools can assume this setup, but they should stay safe, because they touch real files: dry run first, a journal, verification, and undo.
 
 **Text first, UI later.** Every tool returns a clear text summary the assistant can show in chat, such as "12 tracks change, 31 cues added, 2 conflicts", with a short diff of the first few items. The React UI is deferred. Once the text workflow is complete, an optional review page that the MCP server opens (section 7) can be added where the text summary falls short.
 
 ## Completed
 
+**MCP server** (`cuebridge/mcp_server.py`, stdio, `mcp` 2.x; registered in Claude Code)
+
+- Read tools with compact, paginated output: `load_rekordbox_library`, `search_tracks`, `get_track_cues`, `find_tracks_without_cues`.
+- Rekordbox XML edit tools: `set_default_cue` and `duplicate_memory_cues_to_hot_cues`. Dry run by default, a verified backup of a fresh export, atomic writes, refusal if the file changed since planning.
+- Serato tools: `sync_cues_to_serato` and `undo_serato_sync`. Rekordbox wins, but only what differs is changed. In-place overwrite of Serato's 470-byte cue tag, a write-ahead journal, read-back verification, undo, and a refusal while Serato DJ Pro is running.
+- Tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
+
 **Core (Python)**
 
-- Rekordbox parser normalizes cues:
-  - unique IDs built from `TrackID`, cue type, slot and time
-  - hot cue, memory and loop types, with a null `cueIndex` for memory cues
-  - loop end time (`endMs`) and hex color
-  - `filePath` decoded from `Location`
-  - fade and load markers skipped, and bad marks no longer crash the parse
-- Pydantic models (`cuebridge/models.py`): `Cue`, `Track`.
-- Path-based service layer (`cuebridge/services/rekordbox_service.py`) with validation, domain errors, and an mtime-based library cache. The HTTP endpoints call it, and so will the MCP server.
-- Missing or blank titles, artists and cue names are `None`, not placeholder text. The UI chooses what to show.
-- `RekordboxParseError` for XML that isn't a Rekordbox export.
-- pytest suite for the parser and the upload endpoint.
-- Root `.gitignore`, and cache files untracked.
+- Rekordbox parser: unique cue IDs, hot, memory and loop types, loop ends, colors, decoded file paths. Missing or blank titles, artists and cue names are `None`.
+- Service layer that takes file paths: validation, domain errors, an mtime-based library cache, queries, the Rekordbox XML editor, the memory-to-hot slot rules (`cue_rules.py`) and the Rekordbox-to-Serato timing offsets (`cue_timing.py`).
+- Serato `Markers2` codec and a tag reader/locator for MP3 and WAV. All 1,541 tags in the real library decode, re-encode byte for byte, and are located correctly.
+- Pydantic models, `RekordboxParseError`, root `.gitignore`, README rewritten around the MCP server.
+- 400 pytest tests: parsers, fixtures, services, the editor, the Serato codec and sync (on mutagen-built MP3 and WAV files), and the tools, both directly and through an in-memory MCP client.
 
-**Web UI (prototype, on hold until the text workflow is complete)**
+**Web UI (prototype, on hold)**
 
-- FastAPI `POST /upload/rekordbox` with validation (`.xml` only, 100 MB limit, clear 400/413 errors) and `POST /upload/serato` (a stub that parses no tracks).
-- React upload screen, sortable and searchable `TrackTable`, and `CueCard` / `CueComparison` components. Shared TypeScript types match the API.
+- FastAPI `POST /upload/rekordbox` with validation, and a React upload screen with a sortable, searchable `TrackTable` plus `CueCard` / `CueComparison` components.
 
 ## Known issues
 
-1. **Serato parser is a stub.** It decodes the bytes as UTF-8, which is garbage for binary data.
-   - Serato stores cues in binary `Serato Markers2` / `Markers_` ID3/GEOB tags inside the audio files themselves.
-   - Crates are `.crate` files and the library is a `database V2` file. These are binary too, and only hold track lists.
-2. **Missing names default to the string `"Unknown"`**, which is indistinguishable from real data.
-3. **Large libraries need a plan for AI output.** Returning every track would flood the assistant's context. Tools need summaries, filters and pagination. The legacy API's silent 100-track cap is not a model to copy.
-4. **No tests for Serato yet,** and no sample Serato fixtures.
-5. ~~**README is out of date.** It lists Tailwind and shadcn/ui, which aren't installed, and has no setup or run instructions.~~ Fixed: rewritten around the MCP server, with setup, registration and tool docs.
-6. **Housekeeping.** `requirements.txt` has no pinned Python version, and a `.DS_Store` may still be tracked.
-7. **UI bugs to fix when the UI is revived (section 7).**
+1. **Dead code from the first prototype.** `parsers/serato_parser.py` and the `POST /upload/serato` endpoint (with the matching button in the React uploader) just decode a Serato file as text. They are superseded by the real Serato modules and should be removed.
+2. ~~Missing names default to the string "Unknown".~~ Fixed: they are `None`.
+3. ~~Large libraries need a plan for AI output.~~ Done: tools are paginated and capped.
+4. ~~No tests for Serato.~~ Done. A real WAV with cues would still be a useful extra fixture.
+5. ~~README is out of date.~~ Fixed.
+6. **Housekeeping.** `requirements.txt` doesn't pin a Python version. There is no CI or lint.
+7. **Matching by path breaks when files move.** 6 of the 8 cued tracks whose Rekordbox paths no longer exist were found elsewhere by title and artist. The Serato sync skips such tracks today ("the file wasn't found"); the matcher in section 8 fixes that.
+8. **UI bugs to fix if the UI is revived (section 7).**
    - The arrow-key listener is global, so it fires while typing in the search box.
    - Row keys aren't stable, sort direction never flips, and selection isn't reset when the filter changes.
    - The API URL is hardcoded to `localhost:8000`.
@@ -48,19 +48,23 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 ### 1. Restructure the core for reuse
 
 - [x] Move logic out of `main.py` into a service layer that takes **file paths** (not uploads) and returns models. The HTTP endpoints and the MCP server both call it.
-- [x] Move shared models out of the web layer, and decide on a package layout. The `app` package is now `cuebridge` (a generic top-level name like `app` can't be installed alongside other packages, which the packaging item in section 6 needs):
+- [x] Move shared models out of the web layer, and decide on a package layout. The `app` package is now `cuebridge`, since a generic top-level name like `app` can collide with other packages:
   ```
   backend/cuebridge/
-    models.py      shared Pydantic models
-    parsers/       file formats to models
-    services/      path-based logic: validation, caching
-    web/main.py    FastAPI app (run with: uvicorn cuebridge.web.main:app)
-    (mcp_server.py goes here in section 2; avoid naming a package `mcp`, which would shadow the SDK)
+    models.py            shared Pydantic models (Track, Cue)
+    mcp_server.py        the MCP server: tools and their instructions
+    parsers/             file formats to models
+      rekordbox_parser.py, serato_markers.py (codec), serato_tags.py (read, locate)
+    services/            path-based logic
+      rekordbox_service.py (validate, cache), library_queries.py, rekordbox_editor.py,
+      cue_rules.py, cue_timing.py, serato_sync.py (plan, apply, undo)
+    web/main.py          FastAPI app for the prototype UI
   ```
+  (Avoid naming a package `mcp`, which would shadow the SDK.)
 - [x] Make "unknown" explicit: use `None` for missing title or artist, not the string `"Unknown"`.
 - [x] Add a library cache so a large XML is parsed once per session, not on every tool call. `get_rekordbox_library(path)` keys on the resolved path, re-parses when the file's mtime or size changes, and keeps the last 4 libraries.
 
-### 2. MCP server, read-only (Rekordbox)
+### 2. MCP server and Rekordbox tools
 
 - [x] Add the official Python MCP SDK (`mcp` 2.x, where `FastMCP` is now `MCPServer`) and a `cuebridge/mcp_server.py` entry point using stdio: `python -m cuebridge.mcp_server`.
 - [x] Tools, all with compact, paginated output:
@@ -68,7 +72,7 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
   - `search_tracks(query, has_cues, limit, offset)`: filter and page through tracks.
   - `get_track_cues(track_id)`: full cue detail for one track.
   - `find_tracks_without_cues()` and basic library stats.
-  - `set_default_cue(output_path, dry_run=True)`: adds a hot cue A at 0:00 to every track with no cue or loop, in the loaded file (see below). It re-parses its own output to check that only the intended tracks changed. This is the first write tool. Because it only creates a new file, it uses a simple `dry_run` flag. The plan/apply/undo design in section 5 is still needed for edits to audio-file tags.
+  - `set_default_cue(output_path, dry_run=True)`: adds a hot cue A at 0:00 to every track with no cue or loop, in the loaded file (see below). It re-parses its own output to check that only the intended tracks changed. This was the first write tool. It edits an export file, which Rekordbox can regenerate, so it uses a `dry_run` flag and a backup; the audio-file writes in section 3 got a journal and undo as well.
   - `duplicate_memory_cues_to_hot_cues(output_path, dry_run=True)`: copies each memory cue to a hot cue at the same position, in the lowest free slot (8 slots, A-H), in the loaded file. The memory cues stay. The slot rules live in `services/cue_rules.py`, so the Serato writer can use the same ones. On the real library it adds 129 hot cues to 47 tracks, with at most 5 per track, so no overflow.
   - **Edits go into the loaded file itself** (or `output_path` if given). The first edit of a fresh Rekordbox export saves a verified, timestamped backup next to it. Edited files carry a marker comment, so later edits make no more backups and a re-export is backed up again. Writes are atomic and keep permissions, and are refused if the file changed since planning. Both tools build on the same file, so edits add up, and running them again is a no-op. Because these tools edit a file in place, they are annotated as destructive.
 - [x] Clear tool descriptions and error messages that tell the assistant what to do next (for example "load a library first").
@@ -111,7 +115,7 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 
 ### 4. Compare
 
-- [ ] Match tracks across the two systems by file path, falling back to artist and title (and duration).
+- [ ] Match tracks across the systems by file path, falling back to artist and title (and duration). This is the shared matcher in section 8, and it also lets the Serato sync find files whose paths moved.
 - [ ] Tool: `compare_libraries()`, returning a summary plus paginated detail of missing, mismatched and conflicting cues.
 - [ ] Tool: `find_unmatched_tracks()`, listing tracks that couldn't be matched.
 
@@ -120,26 +124,25 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 - [ ] Cue color and slot mapping between the two systems.
 - [ ] Serato to Rekordbox: generate a Rekordbox XML with `POSITION_MARK`s. This writes a new file and leaves the user's library alone.
 - [x] Rekordbox to Serato: write cues into Serato tags in audio files (see section 3).
-- [ ] **Safety before any write to audio files:**
-  - every write tool defaults to `dry_run=True` and returns a preview
-  - a dry run saves a pending plan and returns a plan ID with a text summary and diff
-  - a separate `apply_plan(plan_id)` tool performs the write, and only for a plan that was previewed first
-  - plans expire after a short time and are invalidated if the source files change, so a stale plan can't be applied
-  - automatic backup before modifying a file, and an `undo_plan(plan_id)` tool that restores it
-  - a per-plan limit on files modified
-  - note: an assistant can call `apply_plan` itself, so the real check is the MCP client's per-call approval prompt. The tool description should tell the assistant to show the summary and get the user's explicit go-ahead first. A UI Apply button (section 7) would be a stronger check, since the user's click doesn't pass through the assistant.
-- [ ] Tools: `export_rekordbox_xml(...)`, `plan_serato_cue_write(...)` (creates a pending plan and returns its ID and summary), `apply_plan(plan_id)`, `undo_plan(plan_id)`.
+- [x] **Safety before any write to audio files**, built for the Serato sync in a simpler shape than first planned (no plan IDs):
+  - `dry_run=True` by default, with a text preview of what changes and why files are skipped
+  - applying requires `expected_files` equal to the dry run's count, so an approval is tied to what was previewed
+  - a write-ahead journal of the original bytes, read-back verification, an immediate restore of any file that fails, and `undo_serato_sync`
+  - a refusal while Serato DJ Pro is running
+  - note: an assistant can still call the tool with `dry_run=false` itself, so the real check is the MCP client's per-call approval prompt (the tools are marked destructive). A UI Apply button (section 7) would be stronger.
+- [ ] Apply the same pattern to future file-writing actions (tag fixes, section 8): preview, expected count, journal, verification, undo.
 
 ### 6. Polish and quality
 
 - [x] Update the README: what CueBridge is, the MCP setup, example prompts, and a link to this roadmap. Keep it current as tools are added.
+- [ ] Remove the dead Serato stub: `parsers/serato_parser.py`, the `POST /upload/serato` endpoint, and the Serato upload in the React uploader (known issue 1).
 - [ ] Add CI and lint, and a one-command dev setup.
 - [ ] Pin a Python version.
-- [ ] Packaging for local install (`pipx` or `uvx`), so users can run the server with one command.
+- ~~Packaging for local install (`pipx` or `uvx`).~~ Not needed for a personal tool.
 
 ### 7. Optional review UI, opened by the MCP server (after the text workflow is complete)
 
-Only start this once sections 1–5 work end to end. Decide then, based on how often the text summaries fall short.
+Lowest priority. Only worth building if the text summaries in chat turn out not to be enough for reviewing changes, since this is a personal tool and Claude Code is the client.
 
 - [ ] Point the FastAPI endpoints at the service layer. They read the same cached library as the MCP tools.
 - [ ] Generate the TypeScript types from the backend's OpenAPI schema (`openapi-typescript`), so `types/cue.ts` stops being a hand-copied duplicate of `models.py`.
@@ -150,6 +153,38 @@ Only start this once sections 1–5 work end to end. Decide then, based on how o
 - [ ] MCP tool `open_review_ui(...)`: starts the web server if it isn't running, and returns the URL (and opens the browser if possible).
 - [ ] Fix the UI bugs listed above (search-box arrow keys, stable row keys, sort direction, API base URL from an env variable).
 - [ ] Bind the server to `127.0.0.1` only, and protect apply actions with a one-time token in the URL, so no other local page or process can trigger a write.
+
+### 8. Library management tools
+
+Ideas grounded in what the real library showed (1,667 Apple Music tracks, 30 playlists, 1,177 tracks in the Rekordbox collection, files mostly MP3 and WAV on an ExFAT drive). **Reports** only read. **Actions** change something and follow the same pattern as the Serato sync: dry run first, a journal of what changed, verification, undo.
+
+What can be written, for planning: Apple Music's database is read-only for us (we read an exported XML). Rekordbox can only be changed through an XML we write and then import. Audio files can be written, carefully. Scans must skip the `._*` AppleDouble files that ExFAT drives collect.
+
+**Foundations**
+
+- [ ] Apple Music XML reader (`parsers/apple_music_xml.py`, with `plistlib`): tracks (name, artist, album, genre, BPM, year, bit rate, size, date added, location) and user playlists with their order and folders. Tool `load_apple_music_library(path)`. Needs a fresh manual export (File > Library > Export Library); reading the live library with AppleScript is a possible later step.
+- [ ] A shared track matcher: by path first, then by title and artist (and duration) for files that moved, with Unicode and case normalised. In the sample, 6 of the 8 cued tracks whose paths broke were found by title and artist.
+
+**Reports (read-only)**
+
+- [ ] **Drift between Apple Music and Rekordbox:** tracks and playlists present in one and not the other. The sample (with a stale Rekordbox export) showed 601 Apple Music tracks missing from Rekordbox, 125 Rekordbox tracks no longer in Apple Music, and only 3 of 30 playlists fully covered. Needs a fresh `rekordbox.xml`.
+- [ ] **Missing and moved files:** paths in either library that don't exist on disk, with likely matches.
+- [ ] **Duplicates:** the same title and artist (55 pairs in the Rekordbox collection), the same file in several folders, and near-duplicates by duration and size.
+- [ ] **Metadata gaps:** no artist (418 of 1,177 in Rekordbox), no BPM or key, zero length, "Unknown Artist / Unknown Album" folders, sampler one-shots mixed into the library.
+- [ ] **Playlist hygiene:** tracks in no playlist, tracks in many, empty playlists, overlap between genre playlists, the biggest playlists.
+- [ ] **Format and quality:** counts by format, bit rate and sample rate; low-bit-rate MP3s; very large files.
+- [ ] **Cue audit across both programs:** tracks with cues in one and not the other, Serato cues that Rekordbox lacks (the reverse of the sync), cue counts and colors.
+- [ ] **Library questions:** what was added recently, tracks per genre or year, the library's size.
+
+**Actions**
+
+- [ ] **Playlists into Rekordbox:** write a Rekordbox XML containing the Apple Music playlists, so they can be imported instead of dragged in by hand. Depends on the untested XML import (see "Not yet verified").
+- [ ] **Relocate moved files** in a Rekordbox XML copy by rewriting each `Location`.
+- [ ] **Fix tags in files** (title, artist, genre, BPM, key) from a reviewed list, journaled. Needs a careful ID3 write, which is bigger than the in-place cue overwrite.
+- [ ] **Serato crates from playlists** (optional: you play from Apple Music playlists inside Serato).
+- [ ] **Snapshot:** copy the small, important files (the Rekordbox XML, Serato's `database V2`, the undo journals) to a dated folder on demand.
+
+**Suggested order:** the Apple Music reader and matcher, then the drift and missing-file reports, since that is the problem seen first-hand. Then duplicates, metadata and playlist reports. Actions come last, one at a time.
 
 ### Not yet verified
 
@@ -174,4 +209,5 @@ Things that are built and tested in code but have never been checked in the real
 
 ## Suggested next step
 
-Check one synced file in Serato itself: copy a track with the `FODDER 001` kind of difference, point a Rekordbox cue at it, sync, quit Serato, then open the copy and see whether the cues show. That is the only test the codec and writer cannot do for themselves, and it also answers whether the legacy `Serato Markers_` frame needs writing. After that: matching tracks whose files moved (section 4), then the optional review UI (section 7).
+1. Check one synced file in Serato itself (see "Not yet verified"). It is the only test the cue writer cannot do for itself, and it decides whether the legacy `Serato Markers_` frame needs writing.
+2. Export a fresh `rekordbox.xml`, then build the Apple Music reader, the matcher, and the drift and missing-file reports (section 8).
