@@ -97,7 +97,7 @@ The loop, whenever you add music or playlists in Apple Music:
 
 What Rekordbox really has is only known from an export, so the added folder and tracks are marked as pending: the loader leaves them out until you export Rekordbox afresh, so the comparison keeps showing what still needs importing.
 
-Tried so far (one playlist of tracks Rekordbox already had): Import Playlist works from that folder, the playlist wasn't duplicated and neither were its tracks. Not yet tested: a playlist with added or removed tracks, tracks Rekordbox doesn't have yet, and cues surviving on a track that has them. Try a small change first.
+**Not yet verified in Rekordbox.** The file is valid XML and re-parses to exactly what was planned, but no playlist has been imported from it yet. Check with one small change first (a track added to a small playlist).
 
 ### Syncing cues to Serato
 
