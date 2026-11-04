@@ -16,6 +16,7 @@ from mcp.types import ToolAnnotations
 
 from cuebridge.services import drift, library_queries, library_reports, playlist_export, rekordbox_editor, serato_sync
 from cuebridge.parsers.apple_music_xml import MusicLibrary
+from cuebridge.services import apple_music_live
 from cuebridge.services.apple_music_service import get_apple_music_library
 from cuebridge.services.rekordbox_service import (
     LibraryError,
@@ -43,15 +44,17 @@ mcp = MCPServer(
 
 _current_path: Path | None = None
 _apple_path: Path | None = None
+_apple_live: MusicLibrary | None = None
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 
 
 def reset_state() -> None:
     """Forget the loaded library. Used by tests."""
-    global _current_path, _apple_path
+    global _current_path, _apple_path, _apple_live
     _current_path = None
     _apple_path = None
+    _apple_live = None
 
 
 def _translate_errors(func):
@@ -100,6 +103,9 @@ def load_rekordbox_library(path: str) -> dict:
 
 
 def _apple_library() -> MusicLibrary | None:
+    if _apple_live is not None:
+        return _apple_live
+
     return None if _apple_path is None else get_apple_music_library(_apple_path)
 
 
@@ -108,8 +114,8 @@ def _require_apple_library() -> MusicLibrary:
 
     if library is None:
         raise ToolError(
-            "No Apple Music library is loaded. Call load_apple_music_library with the path to the "
-            "XML exported by Apple Music (File > Library > Export Library) first."
+            "No Apple Music library is loaded. Call load_apple_music_library first (with no path to read "
+            "the open Music app, or with the path to an exported XML)."
         )
 
     return library
@@ -117,19 +123,32 @@ def _require_apple_library() -> MusicLibrary:
 
 @mcp.tool(annotations=READ_ONLY)
 @_translate_errors
-def load_apple_music_library(path: str) -> dict:
-    """Load an Apple Music library exported as XML and return a summary of it.
+def load_apple_music_library(path: str | None = None) -> dict:
+    """Load the Apple Music library and return a summary of it.
 
-    In Apple Music: File > Library > Export Library. `path` is the full path to
-    that .xml file. The summary lists the track count, formats, gaps in the
-    metadata and every playlist with its size. The library stays loaded for
-    get_playlist_tracks, find_missing_files and sync_cues_to_serato.
+    With no `path` it reads the Music app directly, so no export is needed: the
+    Music app must be open (it is never launched), macOS asks for permission the
+    first time, and it takes about half a minute. Nothing in Music is changed.
+    Call it again to pick up changes made in Music since.
+
+    With a `path` it reads an XML exported from Music instead (File > Library >
+    Export Library): the full path to that .xml file.
+
+    The summary lists the track count, formats, gaps in the metadata and every
+    playlist with its size. The library stays loaded for get_playlist_tracks,
+    find_missing_files, compare_libraries and the playlist export.
     """
-    global _apple_path
+    global _apple_path, _apple_live
 
-    library = get_apple_music_library(path)
-    _apple_path = library.path
+    if path:
+        library = get_apple_music_library(path)
+        _apple_path, _apple_live = library.path, None
+    else:
+        library = apple_music_live.read_live_library()
+        _apple_path, _apple_live = None, library
+
     summary = library_reports.music_library_summary(library)
+    summary["source"] = str(library.path) if library.path else "the Music app (live)"
     summary["summary"] = (
         f"Loaded {summary['trackCount']} tracks and {summary['playlistCount']} playlists "
         f"({summary['totalHours']} hours, {summary['totalGigabytes']} GB)."

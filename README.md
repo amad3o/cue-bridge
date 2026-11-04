@@ -53,7 +53,7 @@ Start a new session (or run `/mcp`) and `cuebridge` should show as connected. Th
 | `search_tracks(query, has_cues, limit, offset)` | Lists tracks a page at a time. `query` words must all appear in the title, artist or file name. |
 | `get_track_cues(track_id)` | One track with all its cues: type, pad slot, name, time, loop end and color. |
 | `find_tracks_without_cues(limit, offset)` | Tracks that have no cues. |
-| `load_apple_music_library(path)` | Loads an Apple Music library exported as XML (**File → Library → Export Library**) and summarises it: tracks, formats, metadata gaps and every playlist with its size. |
+| `load_apple_music_library(path=None)` | With no path, reads the **open Music app directly** (no export; about 20-30 seconds; read-only; Music must already be running and macOS asks for permission the first time). With a path, reads an XML exported from Music (**File → Library → Export Library**). Summarises the library: tracks, formats, metadata gaps and every playlist with its size. Call it again to pick up changes. |
 | `get_playlist_tracks(name, limit, offset)` | The tracks of one Apple Music playlist, in order, a page at a time. |
 | `find_missing_files(only_with_cues=True, limit, offset)` | Rekordbox tracks whose file isn't where Rekordbox says, and where Apple Music has it (matched by path, then file name, then title and artist; an unclear match is never guessed). Needs both libraries loaded. |
 | `compare_libraries()` | Compares the loaded Rekordbox and Apple Music libraries: tracks only in one (Apple Music tracks that are in no playlist are counted and ignored, since only playlisted tracks are meant for Rekordbox), Apple Music files listed twice, and every playlist that differs and how. Needs both loaded. |
@@ -91,7 +91,7 @@ It is an edit of your export, so it works like the other editing tools: dry run 
 
 The loop, whenever you add music or playlists in Apple Music:
 
-1. Have current exports of both libraries (Apple Music: **File → Library → Export Library**; Rekordbox: **File → Export Collection in xml format**).
+1. Have a current Rekordbox export (**File → Export Collection in xml format**). Apple Music needs no export: with Music open, Claude reads it directly.
 2. Ask Claude to load both, do a dry run of the playlist export, then write it.
 3. In Rekordbox, once: **Preferences → Advanced → Database → rekordbox xml → Imported Library**, choose your export, and show the *rekordbox xml* item in the sidebar. Each time: reload it, expand it, right-click the folder (default name *Apple Music*) and choose **Import Playlist**.
 

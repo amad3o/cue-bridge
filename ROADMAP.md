@@ -163,7 +163,7 @@ What can be written, for planning: Apple Music's database is read-only for us (w
 
 **Foundations**
 
-- [x] Apple Music XML reader (`parsers/apple_music_xml.py`, `plistlib`): tracks (name, artist, album, genre, BPM, year, bit rate, size, date added, location) and user playlists with their order and folders. Tools `load_apple_music_library` and `get_playlist_tracks`. Needs a fresh manual export (File > Library > Export Library); reading the live library with AppleScript is a possible later step.
+- [x] Apple Music XML reader (`parsers/apple_music_xml.py`, `plistlib`): tracks (name, artist, album, genre, BPM, year, bit rate, size, date added, location) and user playlists with their order and folders. Tools `load_apple_music_library` and `get_playlist_tracks`. Reads an exported XML, or (no path) the open Music app directly through a read-only AppleScript/JXA script (`services/apple_music_live.py`), so no export is needed: on the real library it returns all 1,667 tracks and 30 playlists in about 20-30 seconds and matches the XML export, with the live paths being the more accurate (74 differ only in folder-name case, 3 are files that no longer exist). Music's "Share iTunes Library XML" setting is not available in macOS 15's Music app, which is why the script is used.
 - [x] A track matcher (`services/track_matcher.py`): path, then file name, then title and artist with duration to break ties; Unicode, case and punctuation normalised; an unclear match is reported as ambiguous, never guessed. On the real library, of 51 cued Rekordbox tracks: 43 matched by path, 3 by file name, 2 by title and artist, 3 not at all. Still to do: the other direction (Apple Music tracks to Rekordbox) for the drift reports.
 
 **Reports (read-only)**
