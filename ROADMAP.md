@@ -179,7 +179,7 @@ What can be written, for planning: Apple Music's database is read-only for us (w
 
 **Actions**
 
-- [x] **Playlists into Rekordbox** (`export_playlists_for_rekordbox`, `services/playlist_export.py`): writes a small Rekordbox XML with one folder of the playlists that differ (or those named), copying Rekordbox's own entries for tracks it has and building entries for new ones, so one right-click replaces the drag and drop. Rekordbox 7.2.19 has no way to import playlists without that XML step; writing its database directly was considered and declined as too risky. Found while testing it: 53 Rekordbox tracks point at files Apple Music has since renamed (for example `15 Linguine Limbs.mp3` is now `1-15 Linguine Limbs.mp3`), so they are broken in Rekordbox today; the export points them at the real files.
+- [x] **Playlists into Rekordbox** (`export_playlists_for_rekordbox`, `services/playlist_export.py`): adds a folder of the playlists that differ (or those named) to the Rekordbox XML that Rekordbox's Imported Library points at (backup first; or a separate file with `output_path`), with the folder and new tracks marked as pending until Rekordbox is re-exported, copying Rekordbox's own entries for tracks it has and building entries for new ones, so one right-click replaces the drag and drop. Rekordbox 7.2.19 has no way to import playlists without that XML step; writing its database directly was considered and declined as too risky. Found while testing it: 53 Rekordbox tracks point at files Apple Music has since renamed (for example `15 Linguine Limbs.mp3` is now `1-15 Linguine Limbs.mp3`), so they are broken in Rekordbox today; the export points them at the real files.
 - [ ] **Relocate moved files** in a Rekordbox XML copy by rewriting each `Location`.
 - [ ] **Fix tags in files** (title, artist, genre, BPM, key) from a reviewed list, journaled. Needs a careful ID3 write, which is bigger than the in-place cue overwrite.
 - [ ] **Serato crates from playlists** (optional: you play from Apple Music playlists inside Serato).
@@ -189,7 +189,7 @@ What can be written, for planning: Apple Music's database is read-only for us (w
 
 ### Not yet verified
 
-- [ ] **Importing the playlist XML into Rekordbox 7.** The XML is valid and re-parses to exactly what was planned, but Rekordbox has not imported it. Check: does *Import Playlist* on the folder bring in all playlists at once; does re-importing a playlist that exists make a copy or merge; does a track Rekordbox already has get duplicated; do copied cues and beat grids survive; do the new tracks (built from Apple Music data) get analysed normally. Try one small playlist first.
+- [ ] **Importing the playlist folder into Rekordbox 7.** The XML is valid and re-parses to exactly what was planned, but Rekordbox has not imported it. Check: does *Import Playlist* on the folder bring in all playlists at once; does re-importing a playlist that exists make a copy or merge; does a track Rekordbox already has get duplicated; do copied cues and beat grids survive; do the new tracks (built from Apple Music data) get analysed normally. Try one small playlist first.
 
 Things that are built and tested in code but have never been checked in the real application. Most need the user, because only they can run Rekordbox and Serato.
 

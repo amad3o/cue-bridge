@@ -5,6 +5,7 @@ nothing about FastAPI: it takes paths or bytes, validates them, and returns
 Track models or raises a LibraryError subclass.
 """
 
+import re
 import threading
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
@@ -20,6 +21,14 @@ from cuebridge.parsers.rekordbox_parser import (
 )
 
 MAX_FILE_BYTES = 100 * 1024 * 1024  # 100 MB
+
+# When CueBridge adds playlists to a Rekordbox XML for importing, it notes the
+# folder name in a comment near the top and gives the tracks it adds IDs from
+# this number up. Until Rekordbox has actually imported them (and the file is
+# exported afresh) they are not part of what Rekordbox has, so they are left out.
+PENDING_TRACK_ID_BASE = 900_000_000
+PENDING_FOLDER_PATTERN = re.compile(rb"<!-- CueBridge playlists folder: (.*?) -->")
+PENDING_SEARCH_BYTES = 1024
 MAX_CACHED_LIBRARIES = 4
 
 
@@ -98,6 +107,17 @@ def parse_rekordbox_file(path: str | Path) -> list[Track]:
     return parse_rekordbox_bytes(read_library_bytes(path))
 
 
+def pending_folder(contents: bytes) -> str | None:
+    """The folder CueBridge added for importing, if the file carries the note about it."""
+    found = PENDING_FOLDER_PATTERN.search(contents[:PENDING_SEARCH_BYTES])
+
+    return found.group(1).decode("utf-8") if found else None
+
+
+def is_pending_track_id(track_id: str) -> bool:
+    return track_id.isdigit() and int(track_id) >= PENDING_TRACK_ID_BASE
+
+
 @dataclass(frozen=True)
 class RekordboxLibrary:
     """A parsed Rekordbox library, with a lookup by track ID."""
@@ -106,6 +126,7 @@ class RekordboxLibrary:
     tracks: list[Track]
     tracks_by_id: dict[str, Track]
     playlists: list[RekordboxPlaylist] = field(default_factory=list)
+    pending_folder: str | None = None  # a folder added for importing that Rekordbox may not have yet
 
 
 # Resolved path -> ((mtime_ns, size) when parsed, library). Oldest entry first.
@@ -160,10 +181,17 @@ def get_rekordbox_library(path: str | Path) -> RekordboxLibrary:
 def _build_library(file_path: Path, resolved: Path) -> RekordboxLibrary:
     contents = read_library_bytes(file_path)
     tracks = parse_rekordbox_bytes(contents)
+    playlists = parse_rekordbox_playlists(contents)
+    folder = pending_folder(contents)
+
+    if folder is not None:
+        tracks = [t for t in tracks if not is_pending_track_id(t.trackId)]
+        playlists = [p for p in playlists if p.folders[:1] != (folder,)]
 
     return RekordboxLibrary(
         path=resolved,
         tracks=tracks,
         tracks_by_id={track.trackId: track for track in tracks},
-        playlists=parse_rekordbox_playlists(contents),
+        playlists=playlists,
+        pending_folder=folder,
     )

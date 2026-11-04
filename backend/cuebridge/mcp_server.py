@@ -347,7 +347,7 @@ def export_playlists_for_rekordbox(
     folder_name: str = "Apple Music",
     dry_run: bool = True,
 ) -> dict:
-    """Write Apple Music playlists into a small Rekordbox XML file, ready to import in one step.
+    """Add Apple Music playlists to the Rekordbox XML, ready to import in one step.
 
     Needs both libraries loaded. By default it includes only the playlists
     that differ between Apple Music and Rekordbox (new playlists, or ones with
@@ -358,27 +358,33 @@ def export_playlists_for_rekordbox(
     grids; tracks it doesn't have are added from Apple Music's data. Tracks
     whose file can't be found are left out and listed.
 
-    It writes a separate file (default: cuebridge-playlists.xml next to the
-    loaded Rekordbox export). It never changes the Rekordbox export or
-    Rekordbox's database, and it only replaces a file that CueBridge wrote.
+    By default the playlists are added to the loaded Rekordbox XML itself (the
+    file Rekordbox's 'Imported Library' setting points at), the same way the
+    other editing tools work: a timestamped backup of a fresh export is saved
+    first, the write is atomic, and a file that changed since the plan is
+    refused. The folder and the new tracks are marked as pending, so
+    load_rekordbox_library and compare_libraries don't count them as already in
+    Rekordbox until the user has imported them and exported afresh. Running it
+    again replaces the earlier folder. Pass `output_path` to write a separate
+    small .xml file instead and leave the Rekordbox export alone. Rekordbox's own
+    database is never touched.
+
     Run it with dry_run=true first and show the user the summary.
 
-    To import (steps for the user): in Rekordbox, Preferences > Advanced >
-    Database > rekordbox xml > Imported Library, choose the file; show the
-    'rekordbox xml' item in the sidebar; expand it, right-click the folder and
-    choose Import Playlist. Whether re-importing a playlist that already exists
-    adds a copy or merges has not been tested.
+    To import (steps for the user): in Rekordbox, with Preferences > Advanced >
+    Database > rekordbox xml > Imported Library pointing at the file, show the
+    'rekordbox xml' item in the sidebar (reload it), expand it, right-click the
+    folder and choose Import Playlist. Whether re-importing a playlist that
+    already exists adds a copy or merges has not been tested.
     """
     rekordbox, music = _require_library(), _require_apple_library()
     result = _drift()
     plan = playlist_export.plan_export(rekordbox, music, result, names=playlists, all_playlists=all_playlists)
-    target = playlist_export.check_output_path(
-        Path(output_path) if output_path else playlist_export.default_output_path(rekordbox), rekordbox
-    )
+    in_place = output_path is None
 
     summary = {
         "dryRun": dry_run,
-        "file": str(target),
+        "mode": "added to the Rekordbox XML" if in_place else "separate file",
         "folder": folder_name,
         "playlists": [
             {"name": p.name, "tracks": len(p.keys), "why": p.reason} for p in plan.playlists
@@ -392,23 +398,51 @@ def export_playlists_for_rekordbox(
         "movedFilesFixed": len(plan.relocated),
         "leftOut": [{"playlist": p, "track": t, "why": why} for p, t, why in plan.skipped[:20]],
         "duplicateEntriesRemoved": plan.duplicates_removed,
-        "wouldReplaceEarlierFile": target.exists(),
     }
 
     if not plan.playlists:
+        summary["file"] = str(rekordbox.path)
         summary["summary"] = (
             f"Nothing to export: all {len(plan.in_sync)} playlists already match Rekordbox. "
             "Pass playlists=[...] or all_playlists=true to export some anyway."
         )
         return summary
 
-    data = playlist_export.build_xml(plan, playlist_export.export_source_bytes(rekordbox), folder_name)
-    playlist_export.verify_xml(data, plan)
-    summary["sizeKilobytes"] = round(len(data) / 1024, 1)
     what = (
         f"{len(plan.playlists)} playlists ({len(plan.existing_ids)} tracks Rekordbox has, "
         f"{len(plan.new_tracks)} new) in the folder {folder_name!r}"
     )
+
+    if in_place:
+        file_plan = playlist_export.build_file_plan(plan, rekordbox, folder_name)
+        target, will_backup = file_plan.target.target, rekordbox_editor.needs_backup(file_plan)
+        summary.update(
+            file=str(target),
+            replacesEarlierFolder=file_plan.tracks_replaced > 0 or rekordbox.pending_folder is not None,
+            backupWillBeSaved=will_backup,
+        )
+
+        if dry_run:
+            summary["summary"] = (
+                f"Would add {what} to {target}"
+                + (" (a backup is saved first)" if will_backup else "")
+                + ". Nothing has been written."
+            )
+            return summary
+
+        written = rekordbox_editor.write_plan(file_plan)
+        summary["backup"] = str(written.backup) if written.backup else None
+        summary["summary"] = (
+            f"Added {what} to {written.path}"
+            + (f" (backup: {written.backup})" if written.backup else "")
+            + ". In Rekordbox, reload the 'rekordbox xml' item in the sidebar, right-click the folder and choose Import Playlist."
+        )
+        return summary
+
+    target = playlist_export.check_output_path(Path(output_path), rekordbox)
+    data = playlist_export.build_xml(plan, playlist_export.export_source_bytes(rekordbox), folder_name)
+    playlist_export.verify_xml(data, plan)
+    summary.update(file=str(target), sizeKilobytes=round(len(data) / 1024, 1), wouldReplaceEarlierFile=target.exists())
 
     if dry_run:
         summary["summary"] = f"Would write {what} to {target}. Nothing has been written."
@@ -416,8 +450,8 @@ def export_playlists_for_rekordbox(
 
     playlist_export.write_export(data, target)
     summary["summary"] = (
-        f"Wrote {what} to {target}. In Rekordbox, load it under Preferences > Advanced > Database > "
-        "rekordbox xml, then right-click the folder in the 'rekordbox xml' sidebar item and choose Import Playlist."
+        f"Wrote {what} to {target}. In Rekordbox, point Preferences > Advanced > Database > rekordbox xml at it, "
+        "then right-click the folder in the 'rekordbox xml' sidebar item and choose Import Playlist."
     )
     return summary
 

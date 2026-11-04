@@ -9,7 +9,7 @@ from cuebridge import mcp_server as server
 from cuebridge.parsers.apple_music_xml import parse_apple_music_plist
 from cuebridge.parsers.paths import location_to_path
 from cuebridge.parsers.rekordbox_parser import parse_rekordbox_playlists
-from cuebridge.services import apple_music_service, drift, playlist_export as pe
+from cuebridge.services import apple_music_service, drift, playlist_export as pe, rekordbox_editor
 from cuebridge.services.rekordbox_editor import OutputPathError
 from cuebridge.services.rekordbox_service import clear_cache, get_rekordbox_library, parse_rekordbox_bytes
 from test_drift import rb_playlist_xml, rb_track_xml, rb_xml
@@ -227,29 +227,108 @@ class TestTool:
         return tmp_path
 
     def test_a_dry_run_writes_nothing(self, loaded):
+        export = loaded / "rekordbox.xml"
+        before = export.read_bytes()
+
         result = server.export_playlists_for_rekordbox()
 
-        assert result["dryRun"] is True and not (loaded / "cuebridge-playlists.xml").exists()
+        assert result["dryRun"] is True and export.read_bytes() == before
+        assert not list(loaded.glob("*.backup-*")) and not (loaded / "cuebridge-playlists.xml").exists()
         assert [p["name"] for p in result["playlists"]] == ["Warm"]
         assert result["newTracksForRekordbox"] == 1 and result["newTrackExamples"] == ["Dee - D"]
         assert result["alreadyInSync"] == ["Set"] and "Nothing has been written" in result["summary"]
+        assert result["backupWillBeSaved"] is True and result["mode"] == "added to the Rekordbox XML"
 
-    def test_writing_creates_the_file_and_leaves_the_rekordbox_export_alone(self, loaded):
+    def test_by_default_the_playlists_go_into_the_rekordbox_xml_after_a_backup(self, loaded):
         export = loaded / "rekordbox.xml"
-        before = hashlib.sha256(export.read_bytes()).hexdigest()
+        original = export.read_bytes()
 
         result = server.export_playlists_for_rekordbox(dry_run=False)
 
-        written = loaded / "cuebridge-playlists.xml"
-        assert written.is_file() and pe.WRITTEN_MARKER in written.read_bytes()
-        assert [p.name for p in parse_rekordbox_playlists(written.read_bytes())] == ["Warm"]
-        assert hashlib.sha256(export.read_bytes()).hexdigest() == before
+        (backup,) = loaded.glob("rekordbox.xml.backup-*")
+        assert backup.read_bytes() == original and result["backup"] == str(backup)
+        data = export.read_bytes()
+        assert rekordbox_editor.EDIT_MARKER in data and b"<!-- CueBridge playlists folder: Apple Music -->" in data
+        assert not (loaded / "cuebridge-playlists.xml").exists()
+        folder = [p for p in parse_rekordbox_playlists(data) if p.folders == ("Apple Music",)]
+        assert [p.name for p in folder] == ["Warm"]
         assert "Import Playlist" in result["summary"]
 
-    def test_running_again_replaces_its_own_file(self, loaded):
+    def test_the_existing_library_is_untouched_and_the_additions_are_pending(self, loaded):
+        before = {t.trackId: t for t in get_rekordbox_library(loaded / "rekordbox.xml").tracks}
+        playlists_before = [(p.name, p.track_ids) for p in get_rekordbox_library(loaded / "rekordbox.xml").playlists]
+
         server.export_playlists_for_rekordbox(dry_run=False)
+        after = get_rekordbox_library(loaded / "rekordbox.xml")
+
+        # What Rekordbox really has hasn't changed, so the new track and folder don't count yet...
+        assert {t.trackId: t for t in after.tracks} == before
+        assert [(p.name, p.track_ids) for p in after.playlists] == playlists_before
+        assert after.pending_folder == "Apple Music"
+        # ...but they are in the file for Rekordbox to import.
+        raw = parse_rekordbox_bytes((loaded / "rekordbox.xml").read_bytes())
+        assert len(raw) == len(before) + 1
+
+        server.load_rekordbox_library(str(loaded / "rekordbox.xml"))
+        assert server.compare_libraries()["playlists"]["differ"] == 1  # Warm still differs until imported
+
+    def test_running_again_replaces_the_folder_and_makes_no_second_backup(self, loaded):
+        server.export_playlists_for_rekordbox(dry_run=False)
+        first = (loaded / "rekordbox.xml").read_bytes()
 
         again = server.export_playlists_for_rekordbox(dry_run=False)
+
+        assert (loaded / "rekordbox.xml").read_bytes() == first
+        assert again["backup"] is None and len(list(loaded.glob("rekordbox.xml.backup-*"))) == 1
+        assert again["replacesEarlierFolder"] is True
+
+    def test_a_different_folder_name_replaces_the_earlier_one(self, loaded):
+        server.export_playlists_for_rekordbox(dry_run=False)
+
+        server.export_playlists_for_rekordbox(folder_name="From Apple", dry_run=False)
+
+        folders = {p.folders for p in parse_rekordbox_playlists((loaded / "rekordbox.xml").read_bytes()) if p.folders}
+        assert folders == {("From Apple",)}
+
+    def test_a_real_folder_with_that_name_is_never_touched(self, loaded):
+        export = loaded / "rekordbox.xml"
+        export.write_bytes(export.read_bytes().replace(
+            b"</NODE></PLAYLISTS>", b'<NODE Type="0" Name="Apple Music" Count="0"></NODE></NODE></PLAYLISTS>'
+        ))
+        before = export.read_bytes()
+
+        with pytest.raises(ToolError, match="didn't add"):
+            server.export_playlists_for_rekordbox(dry_run=False)
+
+        assert export.read_bytes() == before
+
+    def test_a_file_that_changed_after_planning_is_not_overwritten(self, loaded):
+        rekordbox = get_rekordbox_library(loaded / "rekordbox.xml")
+        music = apple_music_service.get_apple_music_library(loaded / "Library.xml")
+        result = drift.compare_libraries(rekordbox.tracks, rekordbox.playlists, music)
+        file_plan = pe.build_file_plan(pe.plan_export(rekordbox, music, result), rekordbox)
+        (loaded / "rekordbox.xml").write_bytes(b"<DJ_PLAYLISTS><COLLECTION/></DJ_PLAYLISTS>")
+
+        with pytest.raises(OutputPathError, match="changed since"):
+            rekordbox_editor.write_plan(file_plan)
+
+    def test_a_separate_file_leaves_the_rekordbox_export_alone(self, loaded):
+        export = loaded / "rekordbox.xml"
+        before = hashlib.sha256(export.read_bytes()).hexdigest()
+        target = loaded / "cuebridge-playlists.xml"
+
+        result = server.export_playlists_for_rekordbox(output_path=str(target), dry_run=False)
+
+        assert target.is_file() and pe.WRITTEN_MARKER in target.read_bytes()
+        assert [p.name for p in parse_rekordbox_playlists(target.read_bytes())] == ["Warm"]
+        assert hashlib.sha256(export.read_bytes()).hexdigest() == before and not list(loaded.glob("*.backup-*"))
+        assert result["mode"] == "separate file" and "Import Playlist" in result["summary"]
+
+    def test_a_separate_file_is_replaced_when_run_again(self, loaded):
+        target = str(loaded / "cuebridge-playlists.xml")
+        server.export_playlists_for_rekordbox(output_path=target, dry_run=False)
+
+        again = server.export_playlists_for_rekordbox(output_path=target, dry_run=False)
 
         assert again["wouldReplaceEarlierFile"] is True and (loaded / "cuebridge-playlists.xml").is_file()
 
