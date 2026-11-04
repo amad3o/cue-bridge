@@ -17,6 +17,7 @@ and the library database is never written.
 
 import copy
 import os
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +27,6 @@ from cuebridge.parsers.apple_music_xml import MusicLibrary, MusicTrack
 from cuebridge.parsers.rekordbox_parser import parse_rekordbox_playlists
 from cuebridge.services.drift import LibraryDrift
 from cuebridge.services.rekordbox_editor import (
-    EDIT_MARKER,
     EditTarget,
     OutputPathError,
     _read_source,
@@ -165,8 +165,12 @@ def plan_export(
     return plan
 
 
+# Rekordbox leaves these unencoded in a Location (and encodes spaces, &, ' and brackets).
+_LOCATION_SAFE = "/()!$,#+=:"
+
+
 def _location(path: str) -> str:
-    return "file://localhost" + quote(path, safe="/")
+    return "file://localhost" + quote(path, safe=_LOCATION_SAFE)
 
 
 def _new_track_element(key: str, track: MusicTrack) -> ET.Element:
@@ -315,45 +319,175 @@ class FilePlan:
     relocated: int
 
 
-def _indent_unit(parent: ET.Element) -> str:
-    text = parent.text or ""
-    return text if text.strip() == "" and "\n" in text else "\n  "
+def _attr(value: str) -> str:
+    """Escape an attribute value the way Rekordbox writes it."""
+    return (
+        value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&apos;")
+    )
 
 
-def _append_indented(parent: ET.Element, child: ET.Element) -> None:
-    """Add `child` as the last child of `parent`, with whitespace that matches its siblings."""
-    inner = _indent_unit(parent)
-    outer = inner[: -2] if len(inner) > 2 else "\n"
-    level = max(0, (len(inner) - 1) // 2)
-    ET.indent(child, space="  ", level=level)
-    children = list(parent)
-
-    if children:
-        children[-1].tail = inner
-    else:
-        parent.text = inner
-
-    child.tail = outer
-    parent.append(child)
+def _track_line(key: str, track: MusicTrack) -> str:
+    attributes = " ".join(f'{name}="{_attr(value)}"' for name, value in _new_track_element(key, track).attrib.items())
+    return f"    <TRACK {attributes}/>"
 
 
-def _is_pending(element: ET.Element) -> bool:
-    return is_pending_track_id(element.attrib.get("TrackID", ""))
+def _folder_block(plan: ExportPlan, folder_name: str) -> list[str]:
+    lines = [f'      <NODE Type="0" Name="{_attr(folder_name)}" Count="{len(plan.playlists)}">']
+
+    for item in plan.playlists:
+        head = f'        <NODE Name="{_attr(item.name)}" Type="1" KeyType="0" Entries="{len(item.keys)}"'
+
+        if not item.keys:
+            lines.append(head + "/>")
+            continue
+
+        lines.append(head + ">")
+        lines.extend(f'          <TRACK Key="{_attr(key)}"/>' for key in item.keys)
+        lines.append("        </NODE>")
+
+    lines.append("      </NODE>")
+    return lines
 
 
-def _playlist_root(root: ET.Element) -> ET.Element:
-    playlists = root.find("PLAYLISTS")
+_NODE_TOKEN = re.compile(r"<NODE\b[^>]*?(/?)>|</NODE>")
+_COLLECTION_COUNT = re.compile(r'(<COLLECTION Entries=")(\d+)(")')
+_ROOT_COUNT = re.compile(r'(<NODE Type="0" Name="ROOT" Count=")(\d+)(")')
+_PENDING_TRACK = re.compile(r'[ \t]*<TRACK TrackID="(\d+)"[^>]*/>\r?\n')
 
-    if playlists is None:
-        playlists = ET.SubElement(root, "PLAYLISTS")
 
-    top = playlists.find("NODE")
+def _remove_pending_tracks(text: str) -> tuple[str, int]:
+    removed = 0
 
-    if top is None:
-        top = ET.Element("NODE", {"Type": "0", "Name": "ROOT", "Count": "0"})
-        _append_indented(playlists, top)
+    def drop(match):
+        nonlocal removed
 
-    return top
+        if is_pending_track_id(match.group(1)):
+            removed += 1
+            return ""
+
+        return match.group(0)
+
+    return _PENDING_TRACK.sub(drop, text), removed
+
+
+def _remove_folder(text: str, folder_name: str) -> tuple[str, bool]:
+    """Take out a folder node (and everything in it) that CueBridge added earlier."""
+    opening = re.search(rf'[ \t]*<NODE Type="0" Name="{re.escape(_attr(folder_name))}"[^>]*>\r?\n', text)
+
+    if opening is None:
+        return text, False
+
+    depth = 0
+
+    for token in _NODE_TOKEN.finditer(text, opening.start()):
+        if token.group(0) == "</NODE>":
+            depth -= 1
+        elif token.group(1) != "/":
+            depth += 1
+
+        if depth == 0:
+            end = text.index("\n", token.end()) + 1
+            return text[: opening.start()] + text[end:], True
+
+    raise ExportError("The folder CueBridge added earlier isn't well formed, so it wasn't replaced.")
+
+
+def _set_count(pattern: re.Pattern, text: str, change=None, value: int | None = None) -> str:
+    found = pattern.search(text)
+
+    if found is None:
+        return text  # a file without that count has nothing to keep up to date
+
+    new = value if value is not None else int(found.group(2)) + change
+
+    return text[: found.start(2)] + str(new) + text[found.end(2) :]
+
+
+def _strip_additions(text: str, folder_name: str | None, relocated: dict[str, str]) -> str:
+    """The file with everything CueBridge adds taken out and the counts and moved paths blanked, for comparing."""
+    text, _ = _remove_pending_tracks(text)
+
+    if folder_name:
+        text, _ = _remove_folder(text, folder_name)
+
+    text = _COLLECTION_COUNT.sub(r"\g<1>N\g<3>", text)
+    text = _ROOT_COUNT.sub(r"\g<1>N\g<3>", text)
+
+    for key in relocated:
+        text = re.sub(rf'(<TRACK TrackID="{re.escape(key)}"[^>]*?Location=")[^"]*(")', r"\g<1>L\g<2>", text, flags=re.S)
+
+    return text
+
+
+def _insert_before(text: str, index: int, lines: list[str], newline: str) -> str:
+    """Insert whole lines before the tag at `index`: at the start of its line, or just before it if it shares one."""
+    start = text.rfind("\n", 0, index) + 1
+
+    if text[start:index].strip() == "":
+        return text[:start] + "".join(line + newline for line in lines) + text[start:]
+
+    return text[:index] + newline.join(lines) + newline + text[index:]
+
+
+def patch_xml(original: bytes, plan: ExportPlan, folder_name: str, previous_folder: str | None) -> bytes:
+    """Add the planned tracks and folder to Rekordbox's XML as text, leaving every other byte as it is.
+
+    The file is not parsed and written back: a round trip through an XML library
+    changes the declaration, line endings, escaping and spacing, and Rekordbox
+    turned out not to accept that. New lines are written in Rekordbox's own style
+    and inserted, and nothing else is touched.
+    """
+    text = original.decode("utf-8")
+    newline = "\r\n" if "\r\n" in text else "\n"
+
+    # What an earlier run added is replaced by the new content.
+    text, removed_tracks = _remove_pending_tracks(text)
+    removed_folder = False
+
+    if previous_folder is not None:
+        text, removed_folder = _remove_folder(text, previous_folder)
+
+    clash = re.search(rf'<NODE Type="0" Name="{re.escape(_attr(folder_name))}"', text) or re.search(
+        rf'<NODE Name="{re.escape(_attr(folder_name))}" Type="1"', text
+    )
+
+    if clash:
+        raise ExportError(
+            f"The Rekordbox file already has a folder or playlist called {folder_name!r} that CueBridge didn't add. "
+            "Choose a different folder_name."
+        )
+
+    for key, path in plan.relocated.items():
+        text, changed = re.subn(
+            rf'(<TRACK TrackID="{re.escape(key)}"[^>]*?Location=")[^"]*(")',
+            lambda m: m.group(1) + _attr(_location(path)) + m.group(2),
+            text, count=1, flags=re.S,
+        )
+
+        if not changed:
+            raise ExportError(f"Track {key} wasn't found in the Rekordbox file.")
+
+    end = text.find("</COLLECTION>")
+
+    if end < 0:
+        raise ExportError("The Rekordbox file has no COLLECTION.")
+
+    if plan.new_tracks:
+        text = _insert_before(text, end, [_track_line(key, track) for key, track in plan.new_tracks], newline)
+
+    entries = len(re.findall(r'<TRACK TrackID="', text[: text.find("</COLLECTION>")]))
+    text = _set_count(_COLLECTION_COUNT, text, value=entries)
+
+    playlists_end = text.find("</PLAYLISTS>")
+    root_close = text.rfind("</NODE>", 0, playlists_end)
+
+    if playlists_end < 0 or root_close < 0:
+        raise ExportError("The Rekordbox file has no playlists section to add the folder to.")
+
+    text = _insert_before(text, root_close, _folder_block(plan, folder_name), newline)
+    text = _set_count(_ROOT_COUNT, text, change=1 - (1 if removed_folder else 0))
+
+    return text.encode("utf-8")
 
 
 def build_file_plan(
@@ -365,63 +499,18 @@ def build_file_plan(
     """Add the planned playlists (a folder of them) and new tracks to the loaded Rekordbox XML."""
     source_path, original, stat = _read_source(rekordbox.path)
     target = resolve_target(source_path, stat, output_path)
-    before = parse_rekordbox_bytes(original)
-    root = ET.fromstring(original)
-    collection = root.find("COLLECTION")
-
-    if collection is None:
-        raise ExportError("The Rekordbox file has no COLLECTION.")
-
-    top = _playlist_root(root)
     previous = rekordbox.pending_folder
-    # Only a folder CueBridge itself added earlier (named in the file's note) is ever removed.
-    stale = [n for n in top.findall("NODE") if previous is not None and n.attrib.get("Name") == previous]
-    clash = [n for n in top.findall("NODE") if n.attrib.get("Name") == folder_name and n not in stale]
+    edited = patch_xml(original, plan, folder_name, previous)
 
-    if clash:
-        raise ExportError(
-            f"The Rekordbox file already has a folder or playlist called {folder_name!r} that CueBridge didn't add. "
-            "Choose a different folder_name."
-        )
-
-    # Take out what an earlier run added; the new content replaces it.
-    for node in stale:
-        top.remove(node)
-
-    old_pending = [t for t in collection.findall("TRACK") if _is_pending(t)]
-
-    for element in old_pending:
-        collection.remove(element)
-
-    by_id = {t.attrib.get("TrackID"): t for t in collection.findall("TRACK")}
-
-    for key, path in plan.relocated.items():
-        by_id[key].set("Location", _location(path))
-
-    for key, track in plan.new_tracks:
-        _append_indented(collection, _new_track_element(key, track))
-
-    collection.set("Entries", str(len(collection.findall("TRACK"))))
-
-    folder = ET.Element("NODE", {"Type": "0", "Name": folder_name, "Count": str(len(plan.playlists))})
-
-    for item in plan.playlists:
-        node = ET.SubElement(folder, "NODE", {"Name": item.name, "Type": "1", "KeyType": "0", "Entries": str(len(item.keys))})
-
-        for key in item.keys:
-            ET.SubElement(node, "TRACK", {"Key": key})
-
-    _append_indented(top, folder)
-    top.set("Count", str(len(top.findall("NODE"))))
-
-    xml = ET.tostring(root, encoding="UTF-8", xml_declaration=True)
-    declaration, _, rest = xml.partition(b"\n")
-    note = b"<!-- CueBridge playlists folder: " + folder_name.encode("utf-8") + b" -->"
-    edited = declaration + b"\n" + EDIT_MARKER + b"\n" + note + b"\n" + rest
+    # Taking the additions back out must give the original file, byte for byte (counts and moved paths aside).
+    if _strip_additions(edited.decode("utf-8"), folder_name, plan.relocated) != _strip_additions(
+        original.decode("utf-8"), previous, plan.relocated
+    ):
+        raise ExportError("The edit check failed: something other than the additions changed in the file.")
 
     _verify_file(original, edited, plan, folder_name, previous)
 
-    return FilePlan(target, edited, folder_name, len(plan.new_tracks), len(old_pending), len(plan.relocated))
+    return FilePlan(target, edited, folder_name, len(plan.new_tracks), 0, len(plan.relocated))
 
 
 def _verify_file(original: bytes, edited: bytes, plan: ExportPlan, folder_name: str, previous_folder: str | None) -> None:

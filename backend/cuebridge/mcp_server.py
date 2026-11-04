@@ -17,6 +17,7 @@ from mcp.types import ToolAnnotations
 from cuebridge.services import drift, library_queries, library_reports, playlist_export, rekordbox_editor, serato_sync
 from cuebridge.parsers.apple_music_xml import MusicLibrary
 from cuebridge.services import apple_music_live
+from cuebridge.services import rekordbox_service
 from cuebridge.services.apple_music_service import get_apple_music_library
 from cuebridge.services.rekordbox_service import (
     LibraryError,
@@ -450,6 +451,7 @@ def export_playlists_for_rekordbox(
             return summary
 
         written = rekordbox_editor.write_plan(file_plan)
+        rekordbox_service.write_pending_note(written.path, folder_name, file_plan.xml)
         summary["backup"] = str(written.backup) if written.backup else None
         summary["summary"] = (
             f"Added {what} to {written.path}"

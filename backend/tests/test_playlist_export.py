@@ -9,7 +9,7 @@ from cuebridge import mcp_server as server
 from cuebridge.parsers.apple_music_xml import parse_apple_music_plist
 from cuebridge.parsers.paths import location_to_path
 from cuebridge.parsers.rekordbox_parser import parse_rekordbox_playlists
-from cuebridge.services import apple_music_service, drift, playlist_export as pe, rekordbox_editor
+from cuebridge.services import apple_music_service, drift, playlist_export as pe, rekordbox_editor, rekordbox_service
 from cuebridge.services.rekordbox_editor import OutputPathError
 from cuebridge.services.rekordbox_service import clear_cache, get_rekordbox_library, parse_rekordbox_bytes
 from test_drift import rb_playlist_xml, rb_track_xml, rb_xml
@@ -248,7 +248,8 @@ class TestTool:
         (backup,) = loaded.glob("rekordbox.xml.backup-*")
         assert backup.read_bytes() == original and result["backup"] == str(backup)
         data = export.read_bytes()
-        assert rekordbox_editor.EDIT_MARKER in data and b"<!-- CueBridge playlists folder: Apple Music -->" in data
+        assert b"<!--" not in data  # Rekordbox's file gets no markers; the state lives in a side file
+        assert rekordbox_service.pending_note_path(export).is_file()
         assert not (loaded / "cuebridge-playlists.xml").exists()
         folder = [p for p in parse_rekordbox_playlists(data) if p.folders == ("Apple Music",)]
         assert [p.name for p in folder] == ["Warm"]
@@ -362,3 +363,150 @@ class TestTool:
     def test_both_libraries_are_needed(self, tmp_path):
         with pytest.raises(ToolError, match="load_rekordbox_library"):
             server.export_playlists_for_rekordbox()
+
+
+class TestStaleNote:
+    @pytest.fixture(autouse=True)
+    def clean(self):
+        clear_cache()
+        yield
+        clear_cache()
+
+    def test_a_fresh_export_over_the_file_makes_the_note_stale(self, tmp_path):
+        path = tmp_path / "rekordbox.xml"
+        original = rb_xml(rb_track_xml(10, "A", "X", "/Music/a.mp3"), rb_playlist_xml("Set", 10))
+        path.write_bytes(original)
+        written = original.replace(b"</NODE></PLAYLISTS>", b'<NODE Type="0" Name="Apple Music" Count="0"></NODE></NODE></PLAYLISTS>')
+        path.write_bytes(written)
+        rekordbox_service.write_pending_note(path, "Apple Music", written)
+        clear_cache()
+
+        assert get_rekordbox_library(path).pending_folder == "Apple Music"
+
+        path.write_bytes(written + b"\n")  # Rekordbox exported again, or anything else touched the file
+        clear_cache()
+
+        library = get_rekordbox_library(path)
+        assert library.pending_folder is None and any(p.folders == ("Apple Music",) or p.name == "Set" for p in library.playlists)
+
+    def test_a_missing_or_broken_note_means_nothing_is_pending(self, tmp_path):
+        path = tmp_path / "rekordbox.xml"
+        path.write_bytes(rb_xml("", ""))
+
+        assert get_rekordbox_library(path).pending_folder is None
+
+        rekordbox_service.pending_note_path(path).write_text("not json")
+        clear_cache()
+
+        assert get_rekordbox_library(path).pending_folder is None
+
+
+REAL_STYLE = (
+    '<?xml version="1.0" encoding="UTF-8"?>\r\n\r\n<DJ_PLAYLISTS Version="1.0.0">\r\n'
+    '  <PRODUCT Name="rekordbox" Version="7.2.19" Company="AlphaTheta"/>\r\n'
+    '  <COLLECTION Entries="2">\r\n'
+    '    <TRACK TrackID="10" Name="It&apos;s A &amp; B" Artist="X" Composer="" Album=""\r\n'
+    '           Grouping="" Genre="" Kind="MP3 File" Size="1" TotalTime="5"\r\n'
+    '           Location="file://localhost/Music/old.mp3"\r\n'
+    '           Remixer="" Tonality="" Label="" Mix="">\r\n'
+    '      <TEMPO Inizio="0.437" Bpm="137.00" Metro="4/4" Battito="2"/>\r\n'
+    '    </TRACK>\r\n'
+    '    <TRACK TrackID="20" Name="B" Artist="X" Location="file://localhost/Music/b.mp3"/>\r\n'
+    '  </COLLECTION>\r\n'
+    '  <PLAYLISTS>\r\n'
+    '    <NODE Type="0" Name="ROOT" Count="2">\r\n'
+    '      <NODE Name="CUE Analysis Playlist" Type="1" KeyType="0" Entries="0"/>\r\n'
+    '      <NODE Name="Set" Type="1" KeyType="0" Entries="2">\r\n'
+    '        <TRACK Key="10"/>\r\n'
+    '        <TRACK Key="20"/>\r\n'
+    '      </NODE>\r\n'
+    '    </NODE>\r\n'
+    '  </PLAYLISTS>\r\n'
+    '</DJ_PLAYLISTS>\r\n'
+).encode()
+
+
+class TestPatchingKeepsTheFileAsItIs:
+    """Rekordbox rejected an XML library's re-serialisation of its file, so only new lines may be added."""
+
+    def make_plan(self, **kwargs):
+        track = parse_apple_music_plist(library_bytes([
+            music_track(7, "Don't & Stop", "A&B", "/Music/new.mp3", BPM=120),
+        ])).tracks[0]
+        plan = pe.ExportPlan(
+            playlists=[pe.PlaylistPlan("Mix", ("10", str(pe.NEW_TRACK_ID_BASE + 7)), "requested")],
+            existing_ids=["10"], new_tracks=[(str(pe.NEW_TRACK_ID_BASE + 7), track)], **kwargs,
+        )
+        return plan
+
+    def test_every_original_byte_is_still_there(self):
+        edited = pe.patch_xml(REAL_STYLE, self.make_plan(), "Apple Music", None)
+        text, original = edited.decode(), REAL_STYLE.decode()
+
+        assert edited.startswith(b'<?xml version="1.0" encoding="UTF-8"?>\r\n\r\n<DJ_PLAYLISTS Version="1.0.0">\r\n')
+        assert b"<!--" not in edited and edited.count(b"\n") == edited.count(b"\r\n")  # no comments, CRLF throughout
+        assert pe._strip_additions(text, "Apple Music", {}) == pe._strip_additions(original, None, {})
+        assert "\r\n    <TRACK TrackID=\"20\" Name=\"B\"" in text and text.endswith("</DJ_PLAYLISTS>\r\n")
+
+    def test_the_counts_are_kept_up_to_date(self):
+        text = pe.patch_xml(REAL_STYLE, self.make_plan(), "Apple Music", None).decode()
+
+        assert '<COLLECTION Entries="3">' in text and '<NODE Type="0" Name="ROOT" Count="3">' in text
+
+    def test_new_lines_are_in_rekordbox_s_style(self):
+        text = pe.patch_xml(REAL_STYLE, self.make_plan(), "Apple Music", None).decode()
+
+        assert 'Name="Don&apos;t &amp; Stop" Artist="A&amp;B"' in text
+        assert '/>\r\n  </COLLECTION>' in text and ' />' not in text
+        assert '      <NODE Type="0" Name="Apple Music" Count="1">\r\n        <NODE Name="Mix" Type="1" KeyType="0" Entries="2">\r\n' in text
+        assert '          <TRACK Key="10"/>\r\n' in text
+
+    def test_the_result_is_valid_and_reads_back(self):
+        edited = pe.patch_xml(REAL_STYLE, self.make_plan(), "Apple Music", None)
+
+        tracks = {t.trackId: t for t in parse_rekordbox_bytes(edited)}
+        folder = [p for p in parse_rekordbox_playlists(edited) if p.folders == ("Apple Music",)]
+
+        assert tracks[str(pe.NEW_TRACK_ID_BASE + 7)].trackTitle == "Don't & Stop"
+        assert [(p.name, p.track_ids) for p in folder] == [("Mix", ("10", str(pe.NEW_TRACK_ID_BASE + 7)))]
+
+    def test_a_second_run_replaces_the_first_exactly(self):
+        first = pe.patch_xml(REAL_STYLE, self.make_plan(), "Apple Music", None)
+
+        again = pe.patch_xml(first, self.make_plan(), "Apple Music", "Apple Music")
+
+        assert again == first
+
+    def test_a_different_folder_name_replaces_the_old_folder(self):
+        first = pe.patch_xml(REAL_STYLE, self.make_plan(), "Apple Music", None)
+
+        second = pe.patch_xml(first, self.make_plan(), "From Apple", "Apple Music").decode()
+
+        assert 'Name="Apple Music"' not in second and 'Name="From Apple"' in second
+        assert second.count('TrackID="9') == 1 and '<NODE Type="0" Name="ROOT" Count="3">' in second
+
+    def test_a_moved_file_only_changes_its_location(self):
+        plan = self.make_plan(relocated={"10": "/Music/new place/it's.mp3"})
+
+        text = pe.patch_xml(REAL_STYLE, plan, "Apple Music", None).decode()
+
+        assert 'Location="file://localhost/Music/new%20place/it%27s.mp3"' in text
+        assert 'Location="file://localhost/Music/old.mp3"' not in text
+        assert pe._strip_additions(text, "Apple Music", plan.relocated) == pe._strip_additions(REAL_STYLE.decode(), None, plan.relocated)
+
+    def test_locations_are_encoded_the_way_rekordbox_does_it(self):
+        assert pe._location("/Music/A (b) [c] & d's, e!.mp3") == "file://localhost/Music/A%20(b)%20%5Bc%5D%20%26%20d%27s,%20e!.mp3"
+
+    def test_a_real_folder_with_the_name_is_never_replaced(self):
+        original = REAL_STYLE.replace(b"    </NODE>\r\n  </PLAYLISTS>", b'      <NODE Type="0" Name="Apple Music" Count="0"/>\r\n    </NODE>\r\n  </PLAYLISTS>')
+
+        with pytest.raises(pe.ExportError, match="didn't add"):
+            pe.patch_xml(original, self.make_plan(), "Apple Music", None)
+
+    def test_a_file_without_a_collection_is_refused(self):
+        with pytest.raises(pe.ExportError, match="COLLECTION"):
+            pe.patch_xml(b"<DJ_PLAYLISTS></DJ_PLAYLISTS>", self.make_plan(), "Apple Music", None)
+
+    def test_a_relocated_track_that_is_not_in_the_file_is_refused(self):
+        with pytest.raises(pe.ExportError, match="wasn't found"):
+            pe.patch_xml(REAL_STYLE, self.make_plan(relocated={"99": "/x.mp3"}), "Apple Music", None)

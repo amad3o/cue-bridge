@@ -25,6 +25,7 @@ from cuebridge.parsers.rekordbox_parser import TYPE_CUE, TYPE_LOOP
 from cuebridge.services.cue_rules import plan_memory_to_hot
 from cuebridge.services.rekordbox_service import (
     LibraryError,
+    has_pending_playlists,
     parse_rekordbox_bytes,
     read_library_bytes,
 )
@@ -92,9 +93,13 @@ Plan = DefaultCuePlan | HotCueDuplicationPlan
 def _is_cuebridge_file(path: Path) -> bool:
     try:
         with open(path, "rb") as handle:
-            return EDIT_MARKER in handle.read(MARKER_SEARCH_BYTES)
+            if EDIT_MARKER in handle.read(MARKER_SEARCH_BYTES):
+                return True
     except OSError:
         return False
+
+    # Playlists added for importing leave no marker in the XML, only a side file that matches it.
+    return has_pending_playlists(path)
 
 
 def needs_backup(plan: Plan) -> bool:

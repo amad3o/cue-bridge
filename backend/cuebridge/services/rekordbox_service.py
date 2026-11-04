@@ -5,7 +5,8 @@ nothing about FastAPI: it takes paths or bytes, validates them, and returns
 Track models or raises a LibraryError subclass.
 """
 
-import re
+import hashlib
+import json
 import threading
 import xml.etree.ElementTree as ET
 from collections import OrderedDict
@@ -22,13 +23,16 @@ from cuebridge.parsers.rekordbox_parser import (
 
 MAX_FILE_BYTES = 100 * 1024 * 1024  # 100 MB
 
-# When CueBridge adds playlists to a Rekordbox XML for importing, it notes the
-# folder name in a comment near the top and gives the tracks it adds IDs from
-# this number up. Until Rekordbox has actually imported them (and the file is
-# exported afresh) they are not part of what Rekordbox has, so they are left out.
+# When CueBridge adds playlists to a Rekordbox XML for importing, the tracks it
+# adds get IDs from this number up, and the folder name is recorded in a small
+# side file next to the XML (the XML itself carries no marker, because Rekordbox
+# is picky about its input). The side file holds a checksum of the XML as it was
+# written, so it only applies to that exact file: a fresh export, or any other
+# change, makes it stale and it is ignored. Until Rekordbox has imported the
+# playlists and the file is exported afresh, they are not part of what Rekordbox
+# has, so they are left out.
 PENDING_TRACK_ID_BASE = 900_000_000
-PENDING_FOLDER_PATTERN = re.compile(rb"<!-- CueBridge playlists folder: (.*?) -->")
-PENDING_SEARCH_BYTES = 1024
+PENDING_SUFFIX = ".cuebridge.json"
 MAX_CACHED_LIBRARIES = 4
 
 
@@ -107,11 +111,35 @@ def parse_rekordbox_file(path: str | Path) -> list[Track]:
     return parse_rekordbox_bytes(read_library_bytes(path))
 
 
-def pending_folder(contents: bytes) -> str | None:
-    """The folder CueBridge added for importing, if the file carries the note about it."""
-    found = PENDING_FOLDER_PATTERN.search(contents[:PENDING_SEARCH_BYTES])
+def pending_note_path(xml_path: Path) -> Path:
+    return xml_path.with_name(xml_path.name + PENDING_SUFFIX)
 
-    return found.group(1).decode("utf-8") if found else None
+
+def pending_folder(xml_path: Path, contents: bytes) -> str | None:
+    """The folder CueBridge added for importing, if this exact file is the one it wrote."""
+    try:
+        note = json.loads(pending_note_path(xml_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+    if not isinstance(note, dict) or note.get("sha256") != hashlib.sha256(contents).hexdigest():
+        return None
+
+    folder = note.get("folder")
+
+    return folder if isinstance(folder, str) and folder else None
+
+
+def write_pending_note(xml_path: Path, folder: str, contents: bytes) -> None:
+    note = {"folder": folder, "sha256": hashlib.sha256(contents).hexdigest(), "trackIdBase": PENDING_TRACK_ID_BASE}
+    pending_note_path(xml_path).write_text(json.dumps(note, indent=1), encoding="utf-8")
+
+
+def has_pending_playlists(xml_path: Path) -> bool:
+    try:
+        return pending_folder(xml_path, xml_path.read_bytes()) is not None
+    except OSError:
+        return False
 
 
 def is_pending_track_id(track_id: str) -> bool:
@@ -182,7 +210,7 @@ def _build_library(file_path: Path, resolved: Path) -> RekordboxLibrary:
     contents = read_library_bytes(file_path)
     tracks = parse_rekordbox_bytes(contents)
     playlists = parse_rekordbox_playlists(contents)
-    folder = pending_folder(contents)
+    folder = pending_folder(resolved, contents)
 
     if folder is not None:
         tracks = [t for t in tracks if not is_pending_track_id(t.trackId)]
