@@ -27,7 +27,13 @@ def geob(entries) -> GEOB:
     )
 
 
-def make_mp3(path: Path, entries=None, audio: bytes = AUDIO_WITH_LAME, version: int = 4) -> Path:
+def legacy_geob(data: bytes) -> GEOB:
+    return GEOB(encoding=0, mime="application/octet-stream", filename="", desc=m.LEGACY_DESCRIPTION, data=data)
+
+
+def make_mp3(
+    path: Path, entries=None, audio: bytes = AUDIO_WITH_LAME, version: int = 4, legacy: bytes | None = None
+) -> Path:
     """An MP3 with an ID3 tag (a title, artwork, optionally the Serato frame) and some 'audio'."""
     tags = ID3()
     tags.add(TIT2(encoding=3, text="Song"))
@@ -35,6 +41,9 @@ def make_mp3(path: Path, entries=None, audio: bytes = AUDIO_WITH_LAME, version: 
 
     if entries is not None:
         tags.add(geob(entries))
+
+    if legacy is not None:
+        tags.add(legacy_geob(legacy))
 
     tags.save(path, v2_version=version)
 
@@ -44,7 +53,7 @@ def make_mp3(path: Path, entries=None, audio: bytes = AUDIO_WITH_LAME, version: 
     return path
 
 
-def make_wav(path: Path, entries=None) -> Path:
+def make_wav(path: Path, entries=None, legacy: bytes | None = None) -> Path:
     with wave.open(str(path), "wb") as handle:
         handle.setnchannels(1)
         handle.setsampwidth(2)
@@ -56,6 +65,10 @@ def make_wav(path: Path, entries=None) -> Path:
         wav.add_tags()
         wav.tags.add(APIC(encoding=3, mime="image/png", type=3, desc="", data=b"\x89PNG" + b"\x07" * 3000))
         wav.tags.add(geob(entries))
+
+        if legacy is not None:
+            wav.tags.add(legacy_geob(legacy))
+
         wav.save()
 
     return path
@@ -73,3 +86,29 @@ def rb_track(path: Path | None, *cues: Cue, track_id: str = "1", title: str = "S
         trackId=track_id, trackTitle=title, artist="Artist",
         filePath=None if path is None else str(path), cues=list(cues),
     )
+
+
+# A real legacy `Serato Markers_` payload (from "02 Pax.mp3"): five cues, then the loop slots.
+_UNSET = "7f" * 5
+_LEGACY_LOOP_SLOT = _UNSET + _UNSET + "00" + _UNSET + "0000000003" + "00"
+REAL_LEGACY = bytes.fromhex(
+    "02050000000e"
+    # the five cue entries, as captured
+    "000000017e7f7f7f7f7f007f7f7f7f7f063000000100"
+    "00000156227f7f7f7f7f007f7f7f7f7f000318000100"
+    "00000156297f7f7f7f7f007f7f7f7f7f0630014c0100"
+    "0000065d687f7f7f7f7f007f7f7f7f7f0003194c0100"
+    "000007 6a1e7f7f7f7f7f007f7f7f7f7f0420014c0100".replace(" ", "")
+    + _LEGACY_LOOP_SLOT * 9
+    + "077f7f7f"
+)
+REAL_LEGACY_CUES = [
+    CueEntry(0, 254, "#cc0000"),
+    CueEntry(1, 27426, "#00cc00"),
+    CueEntry(2, 27433, "#cc00cc"),
+    CueEntry(3, 110312, "#00cccc"),
+    CueEntry(4, 128286, "#8800cc"),
+]
+
+# The same frame with every cue slot empty, as Serato writes a track with no cues.
+EMPTY_LEGACY = m.encode_legacy(REAL_LEGACY, [])

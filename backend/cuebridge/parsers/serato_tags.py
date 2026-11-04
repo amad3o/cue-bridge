@@ -12,7 +12,14 @@ from mutagen import MutagenError
 from mutagen.id3 import ID3, ID3NoHeaderError
 from mutagen.wave import WAVE
 
-from cuebridge.parsers.serato_markers import CueEntry, DESCRIPTION, Entry, MarkersError, decode_markers2
+from cuebridge.parsers.serato_markers import (
+    CueEntry,
+    DESCRIPTION,
+    Entry,
+    LEGACY_DESCRIPTION,
+    MarkersError,
+    decode_markers2,
+)
 from cuebridge.services.rekordbox_service import LibraryError
 
 SUPPORTED_SUFFIXES = (".mp3", ".wav")
@@ -119,6 +126,16 @@ def locate_markers2(path: str | Path) -> Markers2Location | None:
     layouts that can't be edited safely in place (unsynchronised or compressed
     frames, UTF-16 descriptions, several Markers2 frames, ...).
     """
+    return locate_frame(path, DESCRIPTION)
+
+
+def locate_legacy_markers(path: str | Path) -> Markers2Location | None:
+    """The same for the older `Serato Markers_` frame (see serato_markers.py)."""
+    return locate_frame(path, LEGACY_DESCRIPTION)
+
+
+def locate_frame(path: str | Path, description: str) -> Markers2Location | None:
+    """Find the payload of the GEOB frame with this description, for in-place editing."""
     file_path = Path(path).expanduser()
     suffix = file_path.suffix.lower()
 
@@ -184,21 +201,21 @@ def locate_markers2(path: str | Path) -> Markers2Location | None:
 
         parts = body[1:].split(b"\x00", 3)
 
-        if len(parts) < 4 or parts[2].decode("latin-1") != DESCRIPTION:
+        if len(parts) < 4 or parts[2].decode("latin-1") != description:
             continue
 
         if body[0] not in (0, 3):
-            raise UnsupportedFileError(f"{file_path.name}: the Markers2 frame uses an unsupported text encoding.")
+            raise UnsupportedFileError(f"{file_path.name}: the {description} frame uses an unsupported text encoding.")
 
         if frame_flags != b"\x00\x00":
             raise UnsupportedFileError(
-                f"{file_path.name}: the Markers2 frame is compressed, encrypted or unsynchronised."
+                f"{file_path.name}: the {description} frame is compressed, encrypted or unsynchronised."
             )
 
         data = parts[3]
         found.append(Markers2Location(offset=base + 10 + body_start + frame_size - len(data), data=data))
 
     if len(found) > 1:
-        raise UnsupportedFileError(f"{file_path.name}: has {len(found)} Markers2 frames.")
+        raise UnsupportedFileError(f"{file_path.name}: has {len(found)} {description} frames.")
 
     return found[0] if found else None

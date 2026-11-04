@@ -31,7 +31,7 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 
 ## Known issues
 
-1. **Dead code from the first prototype.** `parsers/serato_parser.py` and the `POST /upload/serato` endpoint (with the matching button in the React uploader) just decode a Serato file as text. They are superseded by the real Serato modules and should be removed.
+1. ~~Dead code from the first prototype.~~ Removed: the Serato stub, its endpoint and the React button.
 2. ~~Missing names default to the string "Unknown".~~ Fixed: they are `None`.
 3. ~~Large libraries need a plan for AI output.~~ Done: tools are paginated and capped.
 4. ~~No tests for Serato.~~ Done. A real WAV with cues would still be a useful extra fixture.
@@ -88,7 +88,7 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 - Serato's `database V2` is a track list only (path, title, artist, BPM, key). It has no cues. Paths are stored without the leading `/`. Serato keeps one `_Serato_` folder per drive, so the library on the music drive is the real one.
 - Cues live in the audio files: a `GEOB` frame named `Serato Markers2` in the ID3 tag (MP3), or in the `id3 ` chunk (WAV). Its layout: `01 01` + base64 text (wrapped at 72 characters, no `=` padding) + NUL padding to exactly 470 bytes. The base64 decodes to `01 01`, then entries (`name\0`, 4-byte big-endian length, payload), then a final NUL. Entries seen: `COLOR`, `CUE`, `BPMLOCK`. A `CUE` payload is 13 bytes: reserved, slot (0-based), position in ms (4 bytes big-endian), reserved, RGB (3 bytes), 2 reserved, name + NUL.
 - All 1,541 real tags decode and **re-encode byte for byte**, which is the test the codec has to keep passing.
-- Files also carry a legacy `Serato Markers_` frame with the same cues in an older format, plus `Overview`, `Analysis`, `Autotags`, `BeatGrid` frames and artwork. A writer must keep all of them and keep the legacy frame consistent.
+- Files also carry a legacy `Serato Markers_` frame, plus `Overview`, `Analysis`, `Autotags`, `BeatGrid` frames and artwork. **Serato DJ Pro reads the legacy frame**: a file whose Markers2 had three cues and whose legacy frame had one showed one cue, and Serato then wrote its own version back over Markers2. So both must be written. Layout: `02 05`, a 4-byte count (14), 14 entries of 22 bytes, then `07 7f 7f 7f`. An entry is start (5 bytes), end (5), `00`, `7f`x5, color (4), type, lock, with numbers at 7 bits per byte. The first five entries are the cue slots (type `01` = cue); the rest are loops. The encoder leaves a slot that already holds the right cue untouched, because some real files keep default colors or leftover bytes in empty slots. It leaves all 1,040 real files where Serato's two frames agree unchanged.
 - 241 files already have Serato cues, most synced earlier by Lexicon from Rekordbox memory cues.
 - **Timing differs between the programs.** Rekordbox minus Serato: 0 ms for WAV; about 5-6 ms for MP3 with a LAME header; about -26 ms (one MP3 frame) for three MP3s with an Xing/Info frame but no LAME tag. Small sample, so the rule is a hypothesis.
 - ExFAT has no separate `ctime`, and Serato may keep file times, so a change to a tag can't be detected from timestamps. Compare contents.
@@ -108,10 +108,10 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 - [ ] Hot loops and cue names in Serato's `LOOP` entries (none exist in the sample library).
 - [x] Per-format timing offset (`services/cue_timing.py`): WAV 0 ms, MP3 -5.5 ms (LAME header or no Xing/Info frame), MP3 with an Xing/Info frame but no LAME tag left uncorrected and flagged. Round half up. Predicts the 95 real Lexicon-synced cues on measured files to within 1 ms (67 exact).
 - [ ] Collect small real Serato-tagged fixtures for tests (done for one MP3; need a WAV with cues).
-- [ ] Write the legacy `Serato Markers_` frame consistently, or confirm Serato ignores it. Not written yet: files carry both, so a synced file's two copies of the cues now disagree. Test one file in Serato.
+- [x] Write the legacy `Serato Markers_` frame in step with Markers2 (codec, locator, journal with several regions per file, undo, verification). Serato only showed the new cues once this was done.
 - [ ] Tool: `load_serato_library(path)` / `read_serato_cues(...)` to read and compare Serato cues without writing.
 - [x] Tools `sync_cues_to_serato` (dry run by default, `expected_files` must match the dry run) and `undo_serato_sync`.
-- [ ] Confirm in Serato that a file we wrote shows the right cues. Only the user can do this.
+- [x] Confirmed in Serato: a real WAV ("03 Stalker") written by the sync shows all three cues.
 
 ### 4. Compare
 
@@ -135,7 +135,7 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 ### 6. Polish and quality
 
 - [x] Update the README: what CueBridge is, the MCP setup, example prompts, and a link to this roadmap. Keep it current as tools are added.
-- [ ] Remove the dead Serato stub: `parsers/serato_parser.py`, the `POST /upload/serato` endpoint, and the Serato upload in the React uploader (known issue 1).
+- [x] Remove the dead Serato stub, its endpoint and the React upload.
 - [ ] Add CI and lint, and a one-command dev setup.
 - [ ] Pin a Python version.
 - ~~Packaging for local install (`pipx` or `uvx`).~~ Not needed for a personal tool.
@@ -190,8 +190,7 @@ What can be written, for planning: Apple Music's database is read-only for us (w
 
 Things that are built and tested in code but have never been checked in the real application. Most need the user, because only they can run Rekordbox and Serato.
 
-- [ ] **Serato accepts a file CueBridge wrote.** The writer reproduces Serato's tag layout byte for byte (1,541 real tags) and verifies each write by reading it back, but no file has been opened in Serato. Test on a copy of one track: sync, quit Serato, reopen, and check the cues show in the right slots, colors and positions.
-- [ ] **The legacy `Serato Markers_` frame.** Files carry a second, older copy of the cues that the sync does not update, so a synced file's two copies disagree. Find out from the Serato test above whether it matters. If it does, decode and rewrite that frame too.
+- [x] **Serato accepts a file CueBridge wrote** (and needs the legacy frame written too). Checked on one WAV. Still to check: an MP3, and colors and cue positions against Rekordbox by ear.
 - [ ] **Importing an edited Rekordbox XML back into Rekordbox.** Does it add the hot cues to tracks already in the collection, or only add new tracks? Affects `set_default_cue` and `duplicate_memory_cues_to_hot_cues`. Back up Rekordbox first. If it does not update existing tracks, the XML tools are only useful as input for the Serato sync.
 - [ ] **The Rekordbox XML marker comment** (`<!-- Edited by CueBridge. -->`) is accepted by Rekordbox's importer. It is valid XML, but untested.
 - [ ] **MP3 timing for files with an Xing/Info frame but no LAME tag.** Left uncorrected and flagged, based on three files that differed by about 26 ms. Measure more files, or confirm the cause, before correcting them.
@@ -209,5 +208,4 @@ Things that are built and tested in code but have never been checked in the real
 
 ## Suggested next step
 
-1. Check one synced file in Serato itself (see "Not yet verified"). It is the only test the cue writer cannot do for itself, and it decides whether the legacy `Serato Markers_` frame needs writing.
-2. Export a fresh `rekordbox.xml`, then build the Apple Music reader, the matcher, and the drift and missing-file reports (section 8).
+1. Export a fresh `rekordbox.xml`, then build the Apple Music reader, the matcher, and the drift and missing-file reports (section 8).

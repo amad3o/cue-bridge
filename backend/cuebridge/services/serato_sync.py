@@ -5,9 +5,14 @@ For every track that has cues in Rekordbox, the hot cues in the audio file's
 slots, plus memory cues in the free slots), with the timing correction for the
 file type. Tracks without Rekordbox cues are never touched.
 
+Serato keeps the cues twice: in `Markers2` and in the older `Markers_` frame,
+which holds the first five cues and which Serato DJ Pro still reads. Both are
+kept in step.
+
 Writing is deliberately conservative. Almost every Serato-tagged file has a
-Markers2 payload of exactly 470 bytes, so the new payload is written over the
-old one in place: nothing else in the file moves or is re-serialised. Before
+Markers2 payload of exactly 470 bytes and a legacy payload of 318, so the new
+payloads are written over the old ones in place: nothing else in the file moves
+or is re-serialised. Before
 anything is written, the original bytes of every file go into a journal on disk,
 and after each write the file is read back to prove that only those bytes
 changed. Anything that doesn't check out is put back immediately, and a whole
@@ -19,7 +24,7 @@ import json
 import os
 import subprocess
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -27,11 +32,20 @@ from cuebridge.models import Track
 from cuebridge.parsers.serato_markers import (
     CueEntry,
     MarkersError,
+    DESCRIPTION,
+    LEGACY_DESCRIPTION,
     decode_markers2,
+    encode_legacy,
     encode_markers2,
     replace_cues,
 )
-from cuebridge.parsers.serato_tags import Markers2Location, UnsupportedFileError, locate_markers2
+from cuebridge.parsers.serato_tags import (
+    Markers2Location,
+    UnsupportedFileError,
+    locate_frame,
+    locate_legacy_markers,
+    locate_markers2,
+)
 from cuebridge.services.cue_rules import MAX_HOT_CUE_SLOTS, plan_memory_to_hot
 from cuebridge.services.cue_timing import TimingOffset, timing_offset, to_serato_ms
 from cuebridge.services.library_queries import format_time
@@ -46,7 +60,7 @@ DEFAULT_COLOR = "#cc0000"  # Serato's first hot cue color, used only for a slot 
 TOLERANCE_MS = 1
 UNVERIFIED_TOLERANCE_MS = 30
 DEFAULT_MAX_FILES = 500
-JOURNAL_VERSION = 1
+JOURNAL_VERSION = 2
 HASH_CHUNK = 1024 * 1024
 
 
@@ -57,6 +71,20 @@ class SyncError(LibraryError):
 # ---------------------------------------------------------------------------
 # Plan
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Region:
+    """A stretch of a file that the sync overwrites."""
+
+    description: str  # which Serato frame it is
+    offset: int
+    old: bytes
+    new: bytes
+
+    @property
+    def length(self) -> int:
+        return len(self.old)
 
 
 @dataclass(frozen=True)
@@ -72,7 +100,24 @@ class SyncItem:
     timing: TimingOffset | None = None
     location: Markers2Location | None = None
     new_data: bytes | None = None
+    legacy_location: Markers2Location | None = None
+    legacy_new_data: bytes | None = None
     memory_cues_without_slot: int = 0
+
+    @property
+    def regions(self) -> tuple[Region, ...]:
+        """The parts of the file that would change (none for an unchanged file)."""
+        found = []
+
+        if self.location is not None and self.new_data != self.location.data:
+            found.append(Region(DESCRIPTION, self.location.offset, self.location.data, self.new_data))
+
+        if self.legacy_location is not None and self.legacy_new_data != self.legacy_location.data:
+            found.append(
+                Region(LEGACY_DESCRIPTION, self.legacy_location.offset, self.legacy_location.data, self.legacy_new_data)
+            )
+
+        return tuple(found)
 
 
 @dataclass(frozen=True)
@@ -174,6 +219,7 @@ def _plan_track(track: Track, include_memory_cues: bool, default_color: str) -> 
 
     try:
         location = locate_markers2(path)
+        legacy_location = locate_legacy_markers(path) if location is not None else None
     except UnsupportedFileError as error:
         return skip(str(error).split(": ", 1)[-1])
 
@@ -191,16 +237,18 @@ def _plan_track(track: Track, include_memory_cues: bool, default_color: str) -> 
 
         before = _times(e for e in entries if isinstance(e, CueEntry))
         new_data = encode_markers2(replace_cues(entries, cues), size=location.length)
+        legacy_new_data = encode_legacy(legacy_location.data, cues) if legacy_location else None
     except MarkersError as error:
         return skip(str(error))
 
-    status = "unchanged" if new_data == location.data else "change"
-
-    return SyncItem(
-        track.trackId, track.trackTitle, track.artist, path, status,
+    item = SyncItem(
+        track.trackId, track.trackTitle, track.artist, path, "unchanged",
         before=before, after=_times(cues), timing=offset, location=location,
-        new_data=new_data, memory_cues_without_slot=without_slot,
+        new_data=new_data, legacy_location=legacy_location, legacy_new_data=legacy_new_data,
+        memory_cues_without_slot=without_slot,
     )
+
+    return replace(item, status="change") if item.regions else item
 
 
 def build_sync_plan(
@@ -245,13 +293,28 @@ def _require_serato_closed() -> None:
         )
 
 
-def _hash_outside(path: Path, offset: int, length: int) -> str:
-    """SHA-256 of the whole file except the bytes that are allowed to change."""
+def _hash_outside(path: Path, spans: list[tuple[int, int]]) -> str:
+    """SHA-256 of the whole file except the (offset, length) spans that may change."""
     digest = hashlib.sha256()
+    position = 0
 
     with open(path, "rb") as handle:
-        digest.update(handle.read(offset))
-        handle.seek(offset + length)
+        for offset, length in sorted(spans):
+            handle.seek(position)
+            remaining = offset - position
+
+            while remaining > 0:
+                chunk = handle.read(min(HASH_CHUNK, remaining))
+
+                if not chunk:
+                    break
+
+                digest.update(chunk)
+                remaining -= len(chunk)
+
+            position = offset + length
+
+        handle.seek(position)
 
         while chunk := handle.read(HASH_CHUNK):
             digest.update(chunk)
@@ -318,8 +381,12 @@ def apply_sync_plan(plan: SyncPlan, directory: Path | None = None) -> SyncResult
     for item in items:
         stat = item.path.stat()
         entries.append({
-            "path": str(item.path), "offset": item.location.offset, "length": item.location.length,
-            "old": item.location.data.hex(), "new": item.new_data.hex(),
+            "path": str(item.path),
+            "regions": [
+                {"description": r.description, "offset": r.offset, "length": r.length,
+                 "old": r.old.hex(), "new": r.new.hex()}
+                for r in item.regions
+            ],
             "mtime_ns": stat.st_mtime_ns, "atime_ns": stat.st_atime_ns, "size": stat.st_size,
             "state": "pending",
         })
@@ -330,35 +397,43 @@ def apply_sync_plan(plan: SyncPlan, directory: Path | None = None) -> SyncResult
     result = SyncResult(journal=journal_path)
 
     for item, entry in zip(items, entries):
-        path, offset, length = item.path, entry["offset"], entry["length"]
-        old, new = item.location.data, item.new_data
+        path, regions = item.path, item.regions
+        spans = [(r.offset, r.length) for r in regions]
+
+        def restore() -> None:
+            for r in regions:
+                _write_region(path, r.offset, r.old, entry["mtime_ns"], entry["atime_ns"])
 
         try:
-            if _read_region(path, offset, length) != old or path.stat().st_size != entry["size"]:
+            if any(_read_region(path, r.offset, r.length) != r.old for r in regions) or path.stat().st_size != entry["size"]:
                 raise SyncError("the file changed since it was planned")
 
-            outside_before = _hash_outside(path, offset, length)
+            outside_before = _hash_outside(path, spans)
             entry["state"] = "writing"
             _save_journal(journal_path, journal)  # so a crash mid-write is known to need a restore
-            _write_region(path, offset, new, entry["mtime_ns"], entry["atime_ns"])
+
+            for r in regions:
+                _write_region(path, r.offset, r.new, entry["mtime_ns"], entry["atime_ns"])
+
             entry["state"] = "written"
             _save_journal(journal_path, journal)
 
             problems = []
 
-            if _read_region(path, offset, length) != new:
+            if any(_read_region(path, r.offset, r.length) != r.new for r in regions):
                 problems.append("the new bytes didn't read back")
 
-            if _hash_outside(path, offset, length) != outside_before or path.stat().st_size != entry["size"]:
-                problems.append("something outside the cue tag changed")
+            if _hash_outside(path, spans) != outside_before or path.stat().st_size != entry["size"]:
+                problems.append("something outside the cue tags changed")
 
-            relocated = locate_markers2(path)
+            for r in regions:
+                relocated = locate_frame(path, r.description)
 
-            if relocated is None or relocated.offset != offset or relocated.data != new:
-                problems.append("the tag no longer parses to what was written")
+                if relocated is None or relocated.offset != r.offset or relocated.data != r.new:
+                    problems.append(f"the {r.description} tag no longer parses to what was written")
 
             if problems:
-                _write_region(path, offset, old, entry["mtime_ns"], entry["atime_ns"])
+                restore()
                 entry["state"] = "reverted"
                 _save_journal(journal_path, journal)
                 result.failed.append((item, "verification failed and the file was restored: " + "; ".join(problems)))
@@ -372,7 +447,7 @@ def apply_sync_plan(plan: SyncPlan, directory: Path | None = None) -> SyncResult
             # If the write may have started, put the original bytes back.
             if entry["state"] in ("writing", "written"):
                 try:
-                    _write_region(path, offset, old, entry["mtime_ns"], entry["atime_ns"])
+                    restore()
                     entry["state"] = "reverted"
                 except OSError:
                     pass
@@ -409,28 +484,38 @@ def undo_sync(journal_path: Path, dry_run: bool = False) -> UndoResult:
     result = UndoResult()
 
     for entry in reversed(journal["entries"]):
-        path, offset, length = Path(entry["path"]), entry["offset"], entry["length"]
-        old, new = bytes.fromhex(entry["old"]), bytes.fromhex(entry["new"])
+        path = Path(entry["path"])
+
+        # Version 1 journals recorded one region per file.
+        regions = entry.get("regions") or [
+            {"offset": entry["offset"], "length": entry["length"], "old": entry["old"], "new": entry["new"]}
+        ]
+        regions = [
+            (r["offset"], r["length"], bytes.fromhex(r["old"]), bytes.fromhex(r["new"])) for r in regions
+        ]
 
         if not path.is_file():
             result.skipped.append((str(path), "the file no longer exists"))
             continue
 
-        current = _read_region(path, offset, length)
+        current = [_read_region(path, offset, length) for offset, length, _, _ in regions]
 
-        if current == old:
+        if all(now == old for now, (_, _, old, _) in zip(current, regions)):
             result.already_original.append(str(path))
             continue
 
         # A crash mid-write can leave anything; once verified, only our own bytes are safe to replace.
-        if current != new and entry["state"] == "verified":
+        ours = all(now in (old, new) for now, (_, _, old, new) in zip(current, regions))
+
+        if not ours and entry["state"] == "verified":
             result.skipped.append((str(path), "the tag was changed again since (for example by Serato), so it was left alone"))
             continue
 
         if not dry_run:
-            _write_region(path, offset, old, entry["mtime_ns"], entry["atime_ns"])
+            for offset, _, old, _ in regions:
+                _write_region(path, offset, old, entry["mtime_ns"], entry["atime_ns"])
 
-            if _read_region(path, offset, length) != old:
+            if any(_read_region(path, offset, length) != old for offset, length, old, _ in regions):
                 result.skipped.append((str(path), "the original bytes didn't read back after restoring"))
                 continue
 

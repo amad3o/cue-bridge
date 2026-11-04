@@ -82,14 +82,15 @@ Back up your Rekordbox library before importing an edited file. How Rekordbox tr
 
 - **Rekordbox wins, but only changes what differs.** For every track that has cues in Rekordbox, Serato's hot cues are made to match: Rekordbox hot cues keep their slots, memory cues fill the free ones, and a Serato cue that is not in Rekordbox is removed. A cue that already agrees (same slot, within 1 ms, same color and name where Rekordbox has them) is left byte for byte as it is, so colors you already have in Serato survive. Tracks with no cues in Rekordbox are never touched.
 - **Timing.** Rekordbox and Serato place MP3 cues about 5.5 ms apart, and WAV cues exactly the same. The correction is applied by file type. For a few MP3s (an Xing/Info frame without a LAME tag) the two programs differed by about a frame in the files measured, so no correction is applied; the dry run lists those files, and an existing cue within 30 ms is trusted.
-- **In place, and tiny.** Serato's cue tag is a fixed 470 bytes, so only those bytes are overwritten. Nothing else in the file moves, and the file's modified time is kept, as Serato does.
+- **Both of Serato's cue frames.** Serato keeps the cues in `Markers2` (470 bytes) and in an older `Markers_` frame (318 bytes) that holds the first five. Serato DJ Pro reads the older one, so both are written and kept in step.
+- **In place, and tiny.** Only those fixed-size frames are overwritten. Nothing else in the file moves, and the file's modified time is kept, as Serato does.
 - **Journal and undo.** Before any file is touched, the original bytes of every file are saved to `~/.cuebridge/undo/` (set `CUEBRIDGE_HOME` to move it). `undo_serato_sync` restores them. A file whose tag was changed again afterwards is left alone.
 - **Verified after every write.** The file is read back, and the bytes outside the tag must hash identically to before. A file that fails is restored immediately.
 - **Dry run first, and the count must match.** `dry_run` is the default. To apply, pass `expected_files` equal to the number the dry run reported, or nothing is written.
 - **Close Serato first.** Serato keeps cues in memory and can overwrite a change when a track is ejected or it quits, so the tool refuses while Serato DJ Pro is running.
 - **MP3 and WAV, files that already have a Serato tag.** Files with no tag yet (load them in Serato once), M4A, AIFF and FLAC are skipped and listed with the reason.
 
-Whether Serato accepts a file this tool has written has been checked only by reading the files back, not by opening them in Serato. Try it on a copy of one track first.
+A synced WAV has been opened in Serato and shows the new cues; MP3s are checked only by reading the files back. Sync one track first and look at it in Serato.
 
 ## Example prompts
 

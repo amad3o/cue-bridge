@@ -372,8 +372,9 @@ class TestApplying:
 
         journal = json.loads(result.journal.read_text())
         (entry,) = journal["entries"]
-        assert bytes.fromhex(entry["old"]) == original
-        assert bytes.fromhex(entry["new"]) == plan.to_change[0].new_data
+        (region,) = entry["regions"]
+        assert bytes.fromhex(region["old"]) == original
+        assert bytes.fromhex(region["new"]) == plan.to_change[0].new_data
         assert entry["state"] == "verified" and entry["path"] == str(audio)
         assert result.journal.parent == Path(os.environ["CUEBRIDGE_HOME"]) / "undo"
 
@@ -419,7 +420,7 @@ class TestApplying:
         original = audio.read_bytes()
         plan = plan_for(audio, rb_cue(slot=0, ms=1000))
         # After the write, pretend the tag can no longer be found where it should be.
-        monkeypatch.setattr(sync, "locate_markers2", lambda path: None)
+        monkeypatch.setattr(sync, "locate_frame", lambda path, description: None)
 
         result = sync.apply_sync_plan(plan)
 

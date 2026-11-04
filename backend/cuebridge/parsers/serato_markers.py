@@ -187,3 +187,111 @@ def replace_cues(entries: list[Entry], cues: list[CueEntry]) -> list[Entry]:
         insert_at = next((i + 1 for i, e in enumerate(kept) if e.name == "COLOR"), 0)
 
     return kept[:insert_at] + new + kept[insert_at:]
+
+
+# ---------------------------------------------------------------------------
+# The legacy `Serato Markers_` frame
+# ---------------------------------------------------------------------------
+#
+# Older Serato versions keep the first five hot cues in a second frame, and
+# Serato DJ Pro still reads it: a file whose Markers2 has three cues but whose
+# legacy frame has one shows one cue. The layout, as seen in real files:
+#
+#     02 05  +  u32 entry count (14)  +  14 entries of 22 bytes  +  07 7f 7f 7f
+#
+# An entry is: start (5 bytes), end (5), 00, 7f x5, color (4), type, lock.
+# Numbers use 7 bits per byte, most significant group first. An empty slot has
+# start and end 7f x5, color 0 and type 0. A cue has type 01, no end (7f x5)
+# and the color as the 3-byte RGB value in that 7-bit form. The first five
+# entries are the cue slots; the rest hold loops and are left as they are.
+
+LEGACY_DESCRIPTION = "Serato Markers_"
+LEGACY_CUE_SLOTS = 5
+_LEGACY_HEADER = b"\x02\x05"
+_LEGACY_ENTRY = 22
+_LEGACY_COUNT = 14
+_LEGACY_TRAILER = 4
+LEGACY_SIZE = 2 + 4 + _LEGACY_COUNT * _LEGACY_ENTRY + _LEGACY_TRAILER  # 318
+_UNSET = b"\x7f" * 5
+
+
+def _pack7(value: int, width: int) -> bytes:
+    if not 0 <= value < 1 << (7 * width):
+        raise MarkersError(f"{value} doesn't fit the legacy marker encoding.")
+
+    return bytes((value >> (7 * shift)) & 0x7F for shift in reversed(range(width)))
+
+
+def _unpack7(raw: bytes) -> int:
+    value = 0
+
+    for byte in raw:
+        if byte > 0x7F:
+            raise MarkersError("Legacy marker number isn't 7-bit encoded.")
+
+        value = (value << 7) | byte
+
+    return value
+
+
+def _legacy_cue_entry(cue: CueEntry) -> bytes:
+    rgb = int(cue.color[1:], 16)
+    return _pack7(cue.position_ms, 5) + _UNSET + b"\x00" + _UNSET + _pack7(rgb, 4) + b"\x01\x00"
+
+
+_LEGACY_EMPTY = _UNSET + _UNSET + b"\x00" + _UNSET + b"\x00" * 6
+
+
+def _check_legacy(data: bytes) -> None:
+    if len(data) != LEGACY_SIZE or data[:2] != _LEGACY_HEADER or _unpack7(data[2:6]) != _LEGACY_COUNT:
+        raise MarkersError("The legacy Serato Markers_ frame has a layout this tool doesn't know.")
+
+
+def decode_legacy_cues(data: bytes) -> list[CueEntry]:
+    """The cues in a legacy frame (slot 0-4). Names aren't stored there."""
+    _check_legacy(data)
+    cues = []
+
+    for slot in range(LEGACY_CUE_SLOTS):
+        entry = data[6 + slot * _LEGACY_ENTRY : 6 + (slot + 1) * _LEGACY_ENTRY]
+
+        if entry[-2] == 1:
+            cues.append(CueEntry(slot, _unpack7(entry[:5]), "#%06x" % _unpack7(entry[16:20])))
+
+    return cues
+
+
+def encode_legacy(existing: bytes, cues: list[CueEntry]) -> bytes:
+    """`existing` with its five cue slots made to hold `cues` (those in slots 0-4).
+
+    A slot that already holds the wanted cue (same time and color), or is
+    empty and should be, keeps its bytes exactly: Serato leaves odd bytes in
+    some empty slots, and they aren't ours to tidy. Loops, the header and the
+    trailer are kept as well. Raises MarkersError if a slot that has to change
+    holds something other than a plain cue or an empty slot.
+    """
+    _check_legacy(existing)
+    by_slot = {c.index: c for c in cues if c.index < LEGACY_CUE_SLOTS}
+    out = bytearray(existing)
+
+    for slot in range(LEGACY_CUE_SLOTS):
+        start = 6 + slot * _LEGACY_ENTRY
+        old = existing[start : start + _LEGACY_ENTRY]
+        wanted = by_slot.get(slot)
+        is_cue = old[-2] == 1
+
+        if wanted is None and old[-2] == 0:
+            continue  # empty and staying empty
+
+        if wanted is not None and is_cue:
+            have = (_unpack7(old[:5]), _unpack7(old[16:20]))
+
+            if have == (wanted.position_ms, int(wanted.color[1:], 16)):
+                continue  # already right
+
+        if old[-2] not in (0, 1) or old[5:10] != _UNSET or old[10] != 0:
+            raise MarkersError(f"Legacy marker slot {slot + 1} holds something other than a cue.")
+
+        out[start : start + _LEGACY_ENTRY] = _legacy_cue_entry(wanted) if wanted else _LEGACY_EMPTY
+
+    return bytes(out)
