@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import { uploadRekordboxXml } from "../services/rekordboxApi";
 import type { Track } from "../types/cue";
 import TrackTable from "./TrackTable";
-import { uploadSeratoFile } from "../services/seratoApi";
 
 export default function RekordboxUploader() {
   const [file, setFile] = useState<File | null>(null);
@@ -12,8 +11,6 @@ export default function RekordboxUploader() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [showOnlyWithCues, setShowOnlyWithCues] = useState(false);
-  const [seratoFile, setSeratoFile] = useState<File | null>(null);
-  const [seratoSummary, setSeratoSummary] = useState<string | null>(null);
 
   const uploadFile = async () => {
     if (!file) return;
@@ -42,21 +39,6 @@ export default function RekordboxUploader() {
       setTracks([]);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const uploadSerato = async () => {
-    if (!seratoFile) return;
-
-    try {
-      const data = await uploadSeratoFile(seratoFile);
-
-      console.log(data.preview);
-
-      setSeratoSummary(`${data.message}. File size: ${data.size_bytes} bytes`);
-    } catch (error) {
-      console.error("Failed to upload Serato file:", error);
-      setSeratoSummary("Failed to upload Serato file.");
     }
   };
 
@@ -122,33 +104,6 @@ export default function RekordboxUploader() {
         {file && <p>Selected: {file.name}</p>}
       </div>
       {uploadSummary && <p style={{ color: "lightgreen" }}>{uploadSummary}</p>}
-
-      <div
-        style={{
-          border: "2px dashed #777",
-          borderRadius: "12px",
-          padding: "2rem",
-          marginTop: "1rem",
-          textAlign: "center",
-        }}
-      >
-        <p>Upload Serato crate/database file</p>
-
-        <input
-          type="file"
-          onChange={(e) => setSeratoFile(e.target.files?.[0] ?? null)}
-        />
-
-        <br />
-
-        <button onClick={uploadSerato} disabled={!seratoFile}>
-          Upload Serato File
-        </button>
-
-        {seratoFile && <p>Selected: {seratoFile.name}</p>}
-
-        {seratoSummary && <p style={{ color: "#aaa" }}>{seratoSummary}</p>}
-      </div>
 
       <input
         type="text"

@@ -2,7 +2,6 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from cuebridge.models import RekordboxUploadResponse
-from cuebridge.parsers.serato_parser import parse_serato_metadata
 from cuebridge.services import rekordbox_service
 from cuebridge.services.rekordbox_service import FileTooLargeError, LibraryError
 
@@ -41,11 +40,3 @@ async def upload_rekordbox(file: UploadFile = File(...)):
         "tracks": tracks[:MAX_TRACKS_RETURNED],
     }
 
-
-@app.post("/upload/serato")
-async def upload_serato(file: UploadFile = File(...)):
-    contents = await file.read()
-
-    parsed_data = parse_serato_metadata(contents)
-
-    return parsed_data
