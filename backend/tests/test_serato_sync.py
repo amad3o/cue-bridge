@@ -100,10 +100,10 @@ class TestPlanning:
         assert [slot for slot, _ in item.after] == [2]
 
     def test_colors_and_names_come_from_rekordbox_with_a_default(self, audio):
-        plan = plan_for(audio, rb_cue(slot=0, color="#28E214", name="Drop"), rb_cue(slot=1))
+        plan = plan_for(audio, rb_cue(slot=0, color="#E02823", name="Drop"), rb_cue(slot=1))
 
         cues = [e for e in sync.decode_markers2(plan.to_change[0].new_data) if isinstance(e, CueEntry)]
-        assert [(c.color, c.name) for c in cues] == [("#28e214", "Drop"), ("#cc0000", "")]
+        assert [(c.color, c.name) for c in cues] == [("#e02823", "Drop"), ("#cc0000", "")]
 
     def test_the_default_color_applies_only_to_a_slot_with_no_color_anywhere(self, audio):
         plan = plan_for(audio, rb_cue(slot=5), default_color="#00cc00")
@@ -192,9 +192,30 @@ class TestChangeOnlyWhatDiffers:
     def test_a_rekordbox_color_wins_over_the_existing_one(self, tmp_path):
         path = tagged(tmp_path, "wav", CueEntry(0, 5000, "#00cc00"))
 
+        plan = plan_for(path, rb_cue(slot=0, ms=5000, color="#e02823"))
+
+        assert cues_in(plan) == [CueEntry(0, 5000, "#e02823")]
+
+    def test_rekordboxs_default_green_does_not_repaint_a_serato_cue(self, tmp_path):
+        path = tagged(tmp_path, "wav", CueEntry(0, 5000, "#8800cc"))
+
         plan = plan_for(path, rb_cue(slot=0, ms=5000, color="#28e214"))
 
-        assert cues_in(plan) == [CueEntry(0, 5000, "#28e214")]
+        assert plan.to_change == [] and len(plan.with_status("unchanged")) == 1
+
+    def test_rekordboxs_default_green_is_not_used_for_a_new_cue_either(self, tmp_path):
+        path = tagged(tmp_path, "wav", CueEntry(0, 5000, "#8800cc"))
+
+        plan = plan_for(path, rb_cue(slot=0, ms=5000), rb_cue(slot=1, ms=9000, color="#28e214"))
+
+        assert cues_in(plan)[1] == CueEntry(1, 9000, "#cc0000")
+
+    def test_a_color_change_keeps_serato_s_exact_position(self, tmp_path):
+        path = tagged(tmp_path, "wav", CueEntry(0, 5000, "#00cc00"))
+
+        plan = plan_for(path, rb_cue(slot=0, ms=5001, color="#e02823"))
+
+        assert cues_in(plan) == [CueEntry(0, 5000, "#e02823")]
 
     def test_a_rekordbox_name_wins_but_an_empty_one_does_not_erase_a_serato_name(self, tmp_path):
         path = tagged(tmp_path, "wav", CueEntry(0, 5000, "#00cc00", "Intro"))
@@ -597,3 +618,38 @@ class TestUndo:
         assert len({first, second, third}) == 3
         assert sync.latest_journal() == third  # even when the runs share the same second
         assert sorted([third, first, second]) == [first, second, third]
+
+
+class TestEstimatedTiming:
+    """An Xing/Info-without-LAME MP3 whose offset the beat grids pin down (a real case: "Drop feat Frisco")."""
+
+    def file(self, tmp_path, *cues):
+        return make_mp3(
+            tmp_path / "f.mp3", [COLOR, *cues, BPMLOCK], audio=AUDIO_INFO_NO_LAME, beatgrid=(73.0, 118.0)
+        )
+
+    def plan(self, path, *cues):
+        return sync.build_sync_plan([rb_track(path, *cues).model_copy(update={"firstBeatMs": 20})])
+
+    def test_cues_are_shifted_by_the_estimated_frames(self, tmp_path):
+        path = self.file(tmp_path, CueEntry(0, 500, "#cc0000"))
+
+        plan = self.plan(path, rb_cue(slot=0, ms=20), rb_cue(slot=1, ms=16329))
+
+        assert [c.position_ms for c in cues_in(plan)] == [72, 16381]
+        assert plan.flagged_timing and "Estimated" in plan.flagged_timing[0].timing.note
+
+    def test_cues_a_person_placed_by_ear_nearby_are_kept(self, tmp_path):
+        # Placed by hand in Serato at 65 and 16378 ms, against estimates of 72 and 16381.
+        path = self.file(tmp_path, CueEntry(0, 65, "#cc0000"), CueEntry(1, 16378, "#cc0000"))
+
+        plan = self.plan(path, rb_cue(slot=0, ms=20), rb_cue(slot=1, ms=16329))
+
+        assert plan.to_change == [] and len(plan.with_status("unchanged")) == 1
+
+    def test_without_the_rekordbox_grid_the_old_behaviour_remains(self, tmp_path):
+        path = self.file(tmp_path, CueEntry(0, 500, "#cc0000"))
+
+        plan = sync.build_sync_plan([rb_track(path, rb_cue(slot=0, ms=20))])
+
+        assert [c.position_ms for c in cues_in(plan)] == [20]

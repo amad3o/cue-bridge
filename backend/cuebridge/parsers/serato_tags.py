@@ -77,6 +77,31 @@ def read_cues(path: str | Path) -> list[CueEntry]:
     return [e for e in read_markers2(path) or [] if isinstance(e, CueEntry)]
 
 
+def read_first_beat(path: str | Path) -> tuple[float, float] | None:
+    """(position in ms, BPM) of the first marker of Serato's beat grid, or None.
+
+    The `Serato BeatGrid` frame is `01 00`, a 4-byte marker count, then 8-byte
+    markers (a float position in seconds, then a float BPM for the last marker
+    or a beat count for the others), all big-endian.
+    """
+    tags = load_id3(path)
+    frames = tags.getall("GEOB:Serato BeatGrid") if tags is not None else []
+
+    if not frames or len(frames[0].data) < 6 + 8:
+        return None
+
+    data = frames[0].data
+    count = struct.unpack(">I", data[2:6])[0]
+
+    if data[:2] != b"\x01\x00" or count < 1 or len(data) < 6 + 8 * count:
+        return None
+
+    first = struct.unpack(">f", data[6:10])[0]
+    last_bpm = struct.unpack(">f", data[6 + 8 * (count - 1) + 4 : 6 + 8 * count])[0]
+
+    return (first * 1000.0, last_bpm) if last_bpm > 0 else None
+
+
 # ---------------------------------------------------------------------------
 # Locating the tag's bytes, for editing it in place.
 # ---------------------------------------------------------------------------

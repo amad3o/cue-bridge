@@ -90,7 +90,7 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 - All 1,541 real tags decode and **re-encode byte for byte**, which is the test the codec has to keep passing.
 - Files also carry a legacy `Serato Markers_` frame, plus `Overview`, `Analysis`, `Autotags`, `BeatGrid` frames and artwork. **Serato DJ Pro reads the legacy frame**: a file whose Markers2 had three cues and whose legacy frame had one showed one cue, and Serato then wrote its own version back over Markers2. So both must be written. Layout: `02 05`, a 4-byte count (14), 14 entries of 22 bytes, then `07 7f 7f 7f`. An entry is start (5 bytes), end (5), `00`, `7f`x5, color (4), type, lock, with numbers at 7 bits per byte. The first five entries are the cue slots (type `01` = cue); the rest are loops. The encoder leaves a slot that already holds the right cue untouched, because some real files keep default colors or leftover bytes in empty slots. It leaves all 1,040 real files where Serato's two frames agree unchanged.
 - 241 files already have Serato cues, most synced earlier by Lexicon from Rekordbox memory cues.
-- **Timing differs between the programs.** Rekordbox minus Serato: 0 ms for WAV; about 5-6 ms for MP3 with a LAME header; about -26 ms (one MP3 frame) for three MP3s with an Xing/Info frame but no LAME tag. Small sample, so the rule is a hypothesis.
+- **Timing differs between the programs.** Rekordbox minus Serato: 0 ms for WAV; about 5-6 ms for MP3 with a LAME header; for MP3s with an Xing/Info frame but no LAME tag, -26 ms (one MP3 frame) on three files and -52 ms (two frames) on one. The beat grids' first-beat difference (Serato minus Rekordbox) reproduces every known offset: 0.0 ms median on WAV, -4.0 on LAME MP3s, +24 to +27 and +53 on the four Xing/Info files. A cue placed by ear in Serato on the two-frame file landed 45 and 49 ms after Rekordbox's, against 53 predicted.
 - ExFAT has no separate `ctime`, and Serato may keep file times, so a change to a tag can't be detected from timestamps. Compare contents.
 
 **Decisions**
@@ -106,7 +106,8 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 - [ ] Add a missing `Serato Markers2` frame to files that have none (needs a tag rewrite, not an in-place overwrite). Currently skipped with "load the track in Serato once".
 - [ ] M4A, AIFF and FLAC (Serato stores its data differently there).
 - [ ] Hot loops and cue names in Serato's `LOOP` entries (none exist in the sample library).
-- [x] Per-format timing offset (`services/cue_timing.py`): WAV 0 ms, MP3 -5.5 ms (LAME header or no Xing/Info frame), MP3 with an Xing/Info frame but no LAME tag left uncorrected and flagged. Round half up. Predicts the 95 real Lexicon-synced cues on measured files to within 1 ms (67 exact).
+- [x] Per-format timing offset (`services/cue_timing.py`): WAV 0 ms, MP3 -5.5 ms (LAME header or no Xing/Info frame). MP3 with an Xing/Info frame but no LAME tag: estimated from the two beat grids as a whole number of MP3 frames (`refine_with_beat_grids`), otherwise left uncorrected and flagged. Round half up. Predicts the 95 real Lexicon-synced cues on measured files to within 1 ms (67 exact).
+- [x] Rekordbox's default hot-cue green (`#28e214`) no longer overrides Serato colors, and a cue within tolerance keeps Serato's exact position even when its color changes.
 - [ ] Collect small real Serato-tagged fixtures for tests (done for one MP3; need a WAV with cues).
 - [x] Write the legacy `Serato Markers_` frame in step with Markers2 (codec, locator, journal with several regions per file, undo, verification). Serato only showed the new cues once this was done.
 - [ ] Tool: `load_serato_library(path)` / `read_serato_cues(...)` to read and compare Serato cues without writing.
@@ -193,7 +194,7 @@ Things that are built and tested in code but have never been checked in the real
 - [x] **Serato accepts a file CueBridge wrote** (and needs the legacy frame written too). Checked on one WAV. Still to check: an MP3, and colors and cue positions against Rekordbox by ear.
 - [ ] **Importing an edited Rekordbox XML back into Rekordbox.** Does it add the hot cues to tracks already in the collection, or only add new tracks? Affects `set_default_cue` and `duplicate_memory_cues_to_hot_cues`. Back up Rekordbox first. If it does not update existing tracks, the XML tools are only useful as input for the Serato sync.
 - [ ] **The Rekordbox XML marker comment** (`<!-- Edited by CueBridge. -->`) is accepted by Rekordbox's importer. It is valid XML, but untested.
-- [ ] **MP3 timing for files with an Xing/Info frame but no LAME tag.** Left uncorrected and flagged, based on three files that differed by about 26 ms. Measure more files, or confirm the cause, before correcting them.
+- [ ] **MP3 timing for files with an Xing/Info frame but no LAME tag.** Now estimated from beat grids (1 or 2 frames), checked by ear on one file (Drop feat Frisco: within about 6 ms). Check the other three (Sex, Smokin, Glue) by ear, and look for what makes some files one frame and others two.
 - [ ] **The MP3 offset of 5.5 ms** was fitted on Lexicon-synced pairs from one library. It matches 95 cues to within 1 ms, but confirm by ear or with a beat grid on a few tracks.
 - [ ] **Claude Desktop.** The README describes registering the server there, but only Claude Code has been tried.
 - [ ] **Other Python versions.** Tested on 3.13 only; the dependencies declare 3.10 or newer.

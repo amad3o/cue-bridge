@@ -47,10 +47,13 @@ from cuebridge.parsers.serato_tags import (
     locate_markers2,
 )
 from cuebridge.services.cue_rules import MAX_HOT_CUE_SLOTS, plan_memory_to_hot
-from cuebridge.services.cue_timing import TimingOffset, timing_offset, to_serato_ms
+from cuebridge.services.cue_timing import TimingOffset, refine_with_beat_grids, timing_offset, to_serato_ms
 from cuebridge.services.library_queries import format_time
 from cuebridge.services.rekordbox_service import LibraryError
 
+# Rekordbox exports this green (40, 226, 20) on every hot cue nobody has recolored,
+# so it says nothing about the color the user wants in Serato.
+REKORDBOX_DEFAULT_COLOR = "#28e214"
 DEFAULT_COLOR = "#cc0000"  # Serato's first hot cue color, used only for a slot with no color anywhere
 
 # A Serato cue that is already within this many ms of what Rekordbox implies is
@@ -154,7 +157,8 @@ def serato_cues_for(
     Rekordbox wins on which cues exist and where they are, but only changes what
     differs: a cue already in the right slot at (nearly) the right time keeps its
     exact bytes, color included. A color or name comes from Rekordbox when it has
-    one, otherwise from the cue already in that slot, otherwise from the default.
+    one (Rekordbox's default green doesn't count), otherwise from the cue already in
+    that slot, otherwise from the default.
     """
     chosen: list[tuple[int, object]] = [
         (c.cueIndex, c)
@@ -177,14 +181,11 @@ def serato_cues_for(
         name = cue.cueName or None
         old = existing.get(slot)
 
-        if (
-            old is not None
-            and abs(old.position_ms - position) <= tolerance
-            and color in (None, old.color)
-            and name in (None, old.name)
-        ):
-            cues.append(old)
-            continue
+        if color == REKORDBOX_DEFAULT_COLOR:
+            color = None  # Rekordbox's own default, not a color anyone picked
+
+        if old is not None and abs(old.position_ms - position) <= tolerance:
+            position = old.position_ms  # close enough: keep Serato's exact time
 
         cues.append(
             CueEntry(
@@ -228,7 +229,7 @@ def _plan_track(track: Track, include_memory_cues: bool, default_color: str) -> 
 
     try:
         entries = decode_markers2(location.data)
-        offset = timing_offset(path)
+        offset = refine_with_beat_grids(timing_offset(path), path, track.firstBeatMs)
         existing = {e.index: e for e in entries if isinstance(e, CueEntry)}
         cues, without_slot = serato_cues_for(track, offset, existing, include_memory_cues, default_color)
 

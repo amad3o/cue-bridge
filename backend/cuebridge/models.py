@@ -27,6 +27,8 @@ class Track(BaseModel):
     trackTitle: str | None = None
     artist: str | None = None
     filePath: str | None = None
+    # Where Rekordbox's beat grid puts the first beat, in ms (None if it has no grid).
+    firstBeatMs: int | None = None
     cues: list[Cue]
 
 

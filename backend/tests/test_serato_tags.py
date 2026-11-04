@@ -7,6 +7,7 @@ from cuebridge.parsers.serato_tags import (
     UnsupportedFileError,
     locate_markers2,
     read_cues,
+    read_first_beat,
     read_markers2,
 )
 from serato_helpers import BPMLOCK, COLOR, make_mp3, make_wav
@@ -175,3 +176,21 @@ class TestLocating:
         path = make_mp3(tmp_path / "other.mp3", None)
 
         assert locate_markers2(path) is None
+
+
+class TestBeatGrid:
+    def test_the_first_marker_and_bpm_are_read(self, tmp_path):
+        path = make_mp3(tmp_path / "g.mp3", [COLOR], beatgrid=(73.0, 118.0))
+
+        position, bpm = read_first_beat(path)
+
+        assert position == pytest.approx(73.0, abs=0.01) and bpm == pytest.approx(118.0)
+
+    def test_a_file_without_a_grid_gives_none(self, tmp_path):
+        assert read_first_beat(make_mp3(tmp_path / "n.mp3", [COLOR])) is None
+
+    def test_a_file_without_tags_gives_none(self, tmp_path):
+        path = tmp_path / "bare.mp3"
+        path.write_bytes(b"\xff\xfb\x90\x00" * 100)
+
+        assert read_first_beat(path) is None

@@ -120,11 +120,14 @@ def parse_rekordbox_xml(xml_content: bytes):
             if cue is not None:
                 cues.append(cue)
 
+        first_tempo = track.find("TEMPO")
+
         tracks.append({
             "trackId": track_id,
             "trackTitle": track_name,
             "artist": artist,
             "filePath": file_path,
+            "firstBeatMs": _seconds_to_ms(first_tempo.attrib.get("Inizio")) if first_tempo is not None else None,
             "cues": cues,
         })
 

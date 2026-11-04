@@ -6,15 +6,23 @@ from Rekordbox into Serato (Rekordbox time minus Serato time):
     WAV                                    0 ms      (27 cues, all exactly 0)
     MP3 with a LAME header                ~5.5 ms    (5 or 6 ms)
     MP3 without any Xing/Info frame       ~5.5 ms    (5 or 6 ms, 6 files)
-    MP3 with an Xing/Info frame, no LAME  ~-26 ms    (three files, one MP3 frame)
+    MP3 with an Xing/Info frame, no LAME  -26 ms     (three files, one MP3 frame)
+                                          -52 ms     (one file, two frames)
 
-The last group is too small to trust, so no correction is applied there and the
-file is flagged instead. Everything here is empirical, not derived.
+For the last group the shift is a whole number of MP3 frames, but not always the
+same number. The beat grids of both programs tell which: Serato's first beat
+minus Rekordbox's came out at +24, +26, +27 and +53 ms on those four files, and
+a cue placed by ear in Serato matched the two-frame one to within 6 ms. So for
+those files the offset is estimated from the grids and rounded to whole frames,
+and the file stays flagged. Without usable grids no correction is applied.
+Everything here is empirical, not derived.
 """
 
 import math
 from dataclasses import dataclass
 from pathlib import Path
+
+from cuebridge.parsers.serato_tags import UnsupportedFileError, read_first_beat
 
 # Serato's position = Rekordbox's position - this.
 MP3_OFFSET_MS = 5.5
@@ -31,6 +39,8 @@ class TimingOffset:
     # "measured": the rule comes from many files. "unverified": a guess, so the file is flagged.
     confidence: str
     note: str
+    # True when the beat grids can still pin the offset down (see refine_with_beat_grids).
+    refinable: bool = False
 
     @property
     def flagged(self) -> bool:
@@ -86,10 +96,68 @@ def timing_offset(path: str | Path) -> TimingOffset:
             "unverified",
             "MP3 with an Xing/Info frame but no LAME tag: the programs differed by about 26 ms "
             "in the few files measured, so no correction was applied.",
+            refinable=True,
         )
 
     kind = "with a LAME header" if has_lame else "with no Xing/Info frame"
     return TimingOffset(MP3_OFFSET_MS, "measured", f"MP3 {kind}: Serato is about {MP3_OFFSET_MS} ms earlier.")
+
+
+MAX_FRAMES = 3
+GRID_TOLERANCE_MS = 8.0  # how far the grid difference may be from a whole number of frames
+_SAMPLE_RATES = (44100, 48000, 32000)
+
+
+def _frame_ms(frame: bytes) -> float | None:
+    """Length of one MPEG-1 Layer III frame in ms, from the first frame's header."""
+    if len(frame) < 4 or (frame[1] >> 3) & 3 != 3 or (frame[1] >> 1) & 3 != 1:
+        return None
+
+    rate_index = (frame[2] >> 2) & 3
+
+    if rate_index > 2:
+        return None
+
+    return 1152 / _SAMPLE_RATES[rate_index] * 1000.0
+
+
+def refine_with_beat_grids(offset: TimingOffset, path: str | Path, rekordbox_first_beat_ms: int | None) -> TimingOffset:
+    """Estimate the offset of an Xing/Info-without-LAME MP3 from the two beat grids.
+
+    Serato's first beat minus Rekordbox's (taken modulo one beat) should be a
+    whole number of MP3 frames. If it is, that many frames is the offset;
+    otherwise the offset is returned unchanged.
+    """
+    if not offset.refinable or rekordbox_first_beat_ms is None:
+        return offset
+
+    try:
+        grid = read_first_beat(path)
+        frame = _first_mp3_frame(Path(path))
+    except (OSError, UnsupportedFileError):
+        return offset
+
+    frame_ms = _frame_ms(frame) if frame else None
+
+    if grid is None or frame_ms is None:
+        return offset
+
+    first_beat_ms, bpm = grid
+    period = 60000.0 / bpm
+    difference = (first_beat_ms - rekordbox_first_beat_ms + period / 2) % period - period / 2
+    frames = round(difference / frame_ms)
+
+    if not 1 <= frames <= MAX_FRAMES or abs(difference - frames * frame_ms) > GRID_TOLERANCE_MS:
+        return offset
+
+    shift = frames * frame_ms
+
+    return TimingOffset(
+        -shift,
+        "estimated",
+        f"MP3 with an Xing/Info frame but no LAME tag: the beat grids put Serato {frames} MP3 "
+        f"frame{'s' if frames > 1 else ''} ({shift:.0f} ms) later than Rekordbox. Estimated, not measured.",
+    )
 
 
 def to_serato_ms(rekordbox_ms: int, offset: TimingOffset) -> int:

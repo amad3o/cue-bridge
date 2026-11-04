@@ -1,5 +1,6 @@
 """Builders for small audio files carrying a Serato Markers2 tag."""
 
+import struct
 import wave
 from pathlib import Path
 
@@ -31,8 +32,15 @@ def legacy_geob(data: bytes) -> GEOB:
     return GEOB(encoding=0, mime="application/octet-stream", filename="", desc=m.LEGACY_DESCRIPTION, data=data)
 
 
+def beatgrid_geob(first_ms: float, bpm: float) -> GEOB:
+    """A `Serato BeatGrid` frame with a single (terminal) marker."""
+    data = b"\x01\x00" + struct.pack(">I", 1) + struct.pack(">ff", first_ms / 1000.0, bpm) + b"\x00"
+    return GEOB(encoding=0, mime="application/octet-stream", filename="", desc="Serato BeatGrid", data=data)
+
+
 def make_mp3(
-    path: Path, entries=None, audio: bytes = AUDIO_WITH_LAME, version: int = 4, legacy: bytes | None = None
+    path: Path, entries=None, audio: bytes = AUDIO_WITH_LAME, version: int = 4, legacy: bytes | None = None,
+    beatgrid: tuple[float, float] | None = None,
 ) -> Path:
     """An MP3 with an ID3 tag (a title, artwork, optionally the Serato frame) and some 'audio'."""
     tags = ID3()
@@ -44,6 +52,9 @@ def make_mp3(
 
     if legacy is not None:
         tags.add(legacy_geob(legacy))
+
+    if beatgrid is not None:
+        tags.add(beatgrid_geob(*beatgrid))
 
     tags.save(path, v2_version=version)
 

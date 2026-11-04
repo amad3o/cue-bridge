@@ -89,6 +89,23 @@ class TestTrackParsing:
             parse_rekordbox_xml(b"<DJ_PLAYLISTS><COLLECTION>")
 
 
+class TestFirstBeat:
+    XML = (
+        b'<DJ_PLAYLISTS><COLLECTION Entries="2">'
+        b'<TRACK TrackID="1" Name="A"><TEMPO Inizio="0.020" Bpm="117.85" Metro="4/4" Battito="3"/>'
+        b'<TEMPO Inizio="0.540" Bpm="117.85" Metro="4/4" Battito="4"/></TRACK>'
+        b'<TRACK TrackID="2" Name="B"/></COLLECTION></DJ_PLAYLISTS>'
+    )
+
+    def test_the_first_tempo_marker_is_the_first_beat(self):
+        tracks = parse_rekordbox_xml(self.XML)
+
+        assert tracks[0]["firstBeatMs"] == 20
+
+    def test_a_track_without_a_beat_grid_has_none(self):
+        assert parse_rekordbox_xml(self.XML)[1]["firstBeatMs"] is None
+
+
 class TestCueTypes:
     def test_hot_cue(self):
         cue = parse_single_cue('<POSITION_MARK Name="Drop" Type="0" Start="32.5" Num="3"/>')
