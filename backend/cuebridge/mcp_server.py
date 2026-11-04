@@ -13,7 +13,9 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cuebridge.services import library_queries, rekordbox_editor, serato_sync
+from cuebridge.services import library_queries, library_reports, rekordbox_editor, serato_sync
+from cuebridge.parsers.apple_music_xml import MusicLibrary
+from cuebridge.services.apple_music_service import get_apple_music_library
 from cuebridge.services.rekordbox_service import (
     LibraryError,
     RekordboxLibrary,
@@ -39,14 +41,16 @@ mcp = MCPServer(
 )
 
 _current_path: Path | None = None
+_apple_path: Path | None = None
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 
 
 def reset_state() -> None:
     """Forget the loaded library. Used by tests."""
-    global _current_path
+    global _current_path, _apple_path
     _current_path = None
+    _apple_path = None
 
 
 def _translate_errors(func):
@@ -92,6 +96,112 @@ def load_rekordbox_library(path: str) -> dict:
         f"{summary['tracksWithoutCues']} have none."
     )
     return summary
+
+
+def _apple_library() -> MusicLibrary | None:
+    return None if _apple_path is None else get_apple_music_library(_apple_path)
+
+
+def _require_apple_library() -> MusicLibrary:
+    library = _apple_library()
+
+    if library is None:
+        raise ToolError(
+            "No Apple Music library is loaded. Call load_apple_music_library with the path to the "
+            "XML exported by Apple Music (File > Library > Export Library) first."
+        )
+
+    return library
+
+
+@mcp.tool(annotations=READ_ONLY)
+@_translate_errors
+def load_apple_music_library(path: str) -> dict:
+    """Load an Apple Music library exported as XML and return a summary of it.
+
+    In Apple Music: File > Library > Export Library. `path` is the full path to
+    that .xml file. The summary lists the track count, formats, gaps in the
+    metadata and every playlist with its size. The library stays loaded for
+    get_playlist_tracks, find_missing_files and sync_cues_to_serato.
+    """
+    global _apple_path
+
+    library = get_apple_music_library(path)
+    _apple_path = library.path
+    summary = library_reports.music_library_summary(library)
+    summary["summary"] = (
+        f"Loaded {summary['trackCount']} tracks and {summary['playlistCount']} playlists "
+        f"({summary['totalHours']} hours, {summary['totalGigabytes']} GB)."
+    )
+    return summary
+
+
+@mcp.tool(annotations=READ_ONLY)
+@_translate_errors
+def get_playlist_tracks(name: str, limit: int = 50, offset: int = 0) -> dict:
+    """List the tracks of one Apple Music playlist, in playlist order, a page at a time.
+
+    `name` is matched ignoring case; use the names from load_apple_music_library.
+    `limit` is capped at 100.
+    """
+    library = _require_apple_library()
+    wanted = name.strip().casefold()
+    matches = [p for p in library.user_playlists if p.name.casefold() == wanted]
+
+    if not matches:
+        raise ToolError(f"No playlist named {name!r}. Names: " + ", ".join(p.name for p in library.user_playlists))
+
+    playlist = matches[0]
+    limit = max(1, min(limit, library_queries.MAX_LIMIT))
+    offset = max(0, offset)
+    ids = playlist.track_ids[offset : offset + limit]
+
+    return {
+        "playlist": playlist.name,
+        "total": len(playlist.track_ids),
+        "offset": offset,
+        "returned": len(ids),
+        "hasMore": offset + limit < len(playlist.track_ids),
+        "tracks": [library_reports.music_track_to_dict(library.tracks_by_id[i]) for i in ids if i in library.tracks_by_id],
+    }
+
+
+@mcp.tool(annotations=READ_ONLY)
+@_translate_errors
+def find_missing_files(only_with_cues: bool = True, limit: int = 25, offset: int = 0) -> dict:
+    """List Rekordbox tracks whose audio file isn't where Rekordbox says, and where Apple Music has it.
+
+    Needs both libraries loaded. A track is matched to Apple Music by path,
+    then file name, then title and artist (a match must be unambiguous).
+    `only_with_cues` (default true) limits it to tracks that have cues, which
+    are the ones that matter for syncing. `limit` is capped at 100.
+    """
+    rekordbox, music = _require_library(), _require_apple_library()
+    missing = library_reports.find_missing_rekordbox_files(rekordbox.tracks, music, only_with_cues)
+    limit = max(1, min(limit, library_queries.MAX_LIMIT))
+    offset = max(0, offset)
+    page = missing[offset : offset + limit]
+
+    return {
+        "missingCount": len(missing),
+        "foundInAppleMusic": sum(1 for m in missing if m.suggested_path),
+        "notFound": sum(1 for m in missing if not m.suggested_path),
+        "offset": offset,
+        "returned": len(page),
+        "hasMore": offset + limit < len(missing),
+        "files": [
+            {
+                "trackId": m.track.trackId,
+                "title": m.track.trackTitle,
+                "artist": m.track.artist,
+                "cues": len(m.track.cues),
+                "rekordboxPath": m.track.filePath,
+                "matchedBy": m.match.method,
+                "appleMusicPath": m.suggested_path,
+            }
+            for m in page
+        ],
+    }
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -298,6 +408,7 @@ def sync_cues_to_serato(
     expected_files: int | None = None,
     track_ids: list[str] | None = None,
     include_memory_cues: bool = True,
+    use_apple_music_paths: bool = True,
 ) -> dict:
     """Copy the loaded Rekordbox library's cues into the Serato tags of the audio files.
 
@@ -322,10 +433,19 @@ def sync_cues_to_serato(
       reverses a whole run.
 
     `track_ids` limits the sync to some tracks (IDs from search_tracks).
+    `use_apple_music_paths`: when an Apple Music library is loaded, a track
+    whose file is missing at the Rekordbox path is synced at the path Apple
+    Music has for it (see find_missing_files).
     """
     library = _require_library()
+    music = _apple_library() if use_apple_music_paths else None
+    moved = (
+        library_reports.moved_file_paths(library_reports.find_missing_rekordbox_files(library.tracks, music))
+        if music
+        else None
+    )
     plan = serato_sync.build_sync_plan(
-        library.tracks, track_ids=track_ids, include_memory_cues=include_memory_cues
+        library.tracks, track_ids=track_ids, include_memory_cues=include_memory_cues, moved_files=moved
     )
 
     changes = plan.to_change
@@ -339,6 +459,7 @@ def sync_cues_to_serato(
         "skippedBecause": dict(plan.skip_reasons),
         "seratoIsRunning": running,
         "loopsIgnored": plan.loops_ignored,
+        "foundViaAppleMusic": sum(1 for i in plan.items if i.relocated_from and i.status != "skip"),
         "tracksNotPlannedBecauseOfTheFileLimit": plan.not_planned,
         "timingNotVerified": [
             {"title": i.title, "artist": i.artist, "note": i.timing.note} for i in plan.flagged_timing[:10]

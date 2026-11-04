@@ -653,3 +653,9 @@ class TestEstimatedTiming:
         plan = sync.build_sync_plan([rb_track(path, rb_cue(slot=0, ms=20))])
 
         assert [c.position_ms for c in cues_in(plan)] == [20]
+
+
+def test_a_streaming_track_is_skipped_with_a_clear_reason():
+    plan = sync.build_sync_plan([rb_track(None, rb_cue()).model_copy(update={"filePath": "tidal:tracks:368603871"})])
+
+    assert plan.items[0].status == "skip" and "streaming" in plan.items[0].reason

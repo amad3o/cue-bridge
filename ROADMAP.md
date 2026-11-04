@@ -163,13 +163,13 @@ What can be written, for planning: Apple Music's database is read-only for us (w
 
 **Foundations**
 
-- [ ] Apple Music XML reader (`parsers/apple_music_xml.py`, with `plistlib`): tracks (name, artist, album, genre, BPM, year, bit rate, size, date added, location) and user playlists with their order and folders. Tool `load_apple_music_library(path)`. Needs a fresh manual export (File > Library > Export Library); reading the live library with AppleScript is a possible later step.
-- [ ] A shared track matcher: by path first, then by title and artist (and duration) for files that moved, with Unicode and case normalised. In the sample, 6 of the 8 cued tracks whose paths broke were found by title and artist.
+- [x] Apple Music XML reader (`parsers/apple_music_xml.py`, `plistlib`): tracks (name, artist, album, genre, BPM, year, bit rate, size, date added, location) and user playlists with their order and folders. Tools `load_apple_music_library` and `get_playlist_tracks`. Needs a fresh manual export (File > Library > Export Library); reading the live library with AppleScript is a possible later step.
+- [x] A track matcher (`services/track_matcher.py`): path, then file name, then title and artist with duration to break ties; Unicode, case and punctuation normalised; an unclear match is reported as ambiguous, never guessed. On the real library, of 51 cued Rekordbox tracks: 43 matched by path, 3 by file name, 2 by title and artist, 3 not at all. Still to do: the other direction (Apple Music tracks to Rekordbox) for the drift reports.
 
 **Reports (read-only)**
 
 - [ ] **Drift between Apple Music and Rekordbox:** tracks and playlists present in one and not the other. The sample (with a stale Rekordbox export) showed 601 Apple Music tracks missing from Rekordbox, 125 Rekordbox tracks no longer in Apple Music, and only 3 of 30 playlists fully covered. Needs a fresh `rekordbox.xml`.
-- [ ] **Missing and moved files:** paths in either library that don't exist on disk, with likely matches.
+- [x] **Missing and moved files** for Rekordbox (`find_missing_files`), and the sync uses Apple Music's path for a moved file. Real library: 9 cued tracks not at their path; 5 found through Apple Music (all already in sync), 4 not recoverable (one is a Tidal streaming track, one is an M4A missing from both libraries, two are in neither). Still to do: the same check for Apple Music's own paths.
 - [ ] **Duplicates:** the same title and artist (55 pairs in the Rekordbox collection), the same file in several folders, and near-duplicates by duration and size.
 - [ ] **Metadata gaps:** no artist (418 of 1,177 in Rekordbox), no BPM or key, zero length, "Unknown Artist / Unknown Album" folders, sampler one-shots mixed into the library.
 - [ ] **Playlist hygiene:** tracks in no playlist, tracks in many, empty playlists, overlap between genre playlists, the biggest playlists.

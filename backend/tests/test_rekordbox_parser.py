@@ -2,10 +2,10 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
+from cuebridge.parsers.paths import location_to_path
 from cuebridge.parsers.rekordbox_parser import (
     RekordboxParseError,
     _parse_color,
-    _parse_location,
     parse_rekordbox_xml,
 )
 
@@ -209,19 +209,19 @@ class TestColor:
 class TestFilePath:
     def test_url_decoding(self):
         assert (
-            _parse_location("file://localhost/Users/me/My%20Song.mp3")
+            location_to_path("file://localhost/Users/me/My%20Song.mp3")
             == "/Users/me/My Song.mp3"
         )
 
     def test_windows_drive_path(self):
-        assert _parse_location("file://localhost/C:/Music/a.mp3") == "C:/Music/a.mp3"
+        assert location_to_path("file://localhost/C:/Music/a.mp3") == "C:/Music/a.mp3"
 
     def test_without_localhost(self):
-        assert _parse_location("file:///Users/me/a.mp3") == "/Users/me/a.mp3"
+        assert location_to_path("file:///Users/me/a.mp3") == "/Users/me/a.mp3"
 
     @pytest.mark.parametrize("value", [None, ""])
     def test_empty_location_is_none(self, value):
-        assert _parse_location(value) is None
+        assert location_to_path(value) is None
 
     def test_file_path_copied_onto_cues(self):
         tracks = parse_rekordbox_xml(

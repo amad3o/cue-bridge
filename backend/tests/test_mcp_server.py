@@ -12,6 +12,7 @@ from cuebridge.parsers.serato_markers import CueEntry
 from cuebridge.parsers.serato_tags import read_cues
 from cuebridge.services import serato_sync
 from cuebridge.services.rekordbox_service import clear_cache
+from apple_helpers import music_track, playlist, write_library
 from serato_helpers import AUDIO_INFO_NO_LAME, AUDIO_WITH_LAME, BPMLOCK, COLOR, make_mp3, make_wav
 
 FIXTURE = Path(__file__).parent / "fixtures" / "rekordbox_sample.xml"
@@ -52,6 +53,9 @@ class TestRegistration:
             "search_tracks",
             "get_track_cues",
             "find_tracks_without_cues",
+            "load_apple_music_library",
+            "get_playlist_tracks",
+            "find_missing_files",
             "set_default_cue",
             "duplicate_memory_cues_to_hot_cues",
             "sync_cues_to_serato",
@@ -483,3 +487,106 @@ class TestSyncToSerato:
         server.undo_serato_sync(dry_run=False)
 
         assert library["wav"].read_bytes() == original
+
+
+class TestAppleMusicTools:
+    @pytest.fixture(autouse=True)
+    def safe_environment(self, tmp_path, monkeypatch):
+        from cuebridge.services import apple_music_service
+
+        apple_music_service.clear_cache()
+        monkeypatch.setenv("CUEBRIDGE_HOME", str(tmp_path / "cuebridge-home"))
+        monkeypatch.setattr(serato_sync, "is_serato_running", lambda: False)
+
+    @pytest.fixture
+    def libraries(self, tmp_path):
+        """Rekordbox thinks "Three" is in /nowhere; Apple Music (rightly) has it as moved.wav."""
+        moved = make_wav(tmp_path / "moved.wav", [COLOR, CueEntry(0, 500, "#cc0000"), BPMLOCK])
+        xml = tmp_path / "rekordbox.xml"
+        xml.write_text(
+            "<DJ_PLAYLISTS><COLLECTION>"
+            '<TRACK TrackID="3" Name="Three" Artist="C" Location="file://localhost/nowhere/three.wav">'
+            '<POSITION_MARK Type="0" Start="2.0" Num="0"/></TRACK>'
+            '<TRACK TrackID="4" Name="Four" Artist="D" Location="file://localhost/nowhere/four.wav">'
+            '<POSITION_MARK Type="0" Start="3.0" Num="0"/></TRACK>'
+            "</COLLECTION></DJ_PLAYLISTS>"
+        )
+        apple = write_library(
+            tmp_path / "Library.xml",
+            [music_track(1, "Three", "C", moved), music_track(2, "Other", "Z", tmp_path / "other.wav")],
+            [playlist("Warmup", 2, 1), playlist("Empty")],
+        )
+        server.load_rekordbox_library(str(xml))
+        return {"moved": moved, "apple": str(apple)}
+
+    def test_loading_gives_a_summary_with_the_playlists(self, libraries):
+        result = server.load_apple_music_library(libraries["apple"])
+
+        assert result["trackCount"] == 2 and result["playlistCount"] == 2
+        assert [p["name"] for p in result["playlists"]] == ["Warmup", "Empty"]
+        assert "Loaded 2 tracks and 2 playlists" in result["summary"]
+
+    def test_a_bad_path_is_a_tool_error(self, tmp_path):
+        with pytest.raises(ToolError, match="not found"):
+            server.load_apple_music_library(str(tmp_path / "nope.xml"))
+
+    def test_a_playlist_lists_its_tracks_in_order(self, libraries):
+        server.load_apple_music_library(libraries["apple"])
+
+        result = server.get_playlist_tracks("warmup")
+
+        assert [t["title"] for t in result["tracks"]] == ["Other", "Three"]
+        assert result["total"] == 2 and result["hasMore"] is False
+
+    def test_playlists_are_paged(self, libraries):
+        server.load_apple_music_library(libraries["apple"])
+
+        result = server.get_playlist_tracks("Warmup", limit=1, offset=1)
+
+        assert [t["title"] for t in result["tracks"]] == ["Three"] and result["hasMore"] is False
+        assert server.get_playlist_tracks("Warmup", limit=1)["hasMore"] is True
+
+    def test_an_unknown_playlist_lists_the_names(self, libraries):
+        server.load_apple_music_library(libraries["apple"])
+
+        with pytest.raises(ToolError, match="Warmup"):
+            server.get_playlist_tracks("nope")
+
+    def test_the_tools_need_the_library_loaded_first(self, libraries):
+        for call in (lambda: server.get_playlist_tracks("x"), server.find_missing_files):
+            with pytest.raises(ToolError, match="load_apple_music_library"):
+                call()
+
+    def test_missing_files_are_listed_with_where_they_are(self, libraries):
+        server.load_apple_music_library(libraries["apple"])
+
+        result = server.find_missing_files()
+
+        assert result["missingCount"] == 2 and result["foundInAppleMusic"] == 1 and result["notFound"] == 1
+        found = next(f for f in result["files"] if f["title"] == "Three")
+        assert found["appleMusicPath"] == str(libraries["moved"]) and found["matchedBy"] == "title_artist"
+        assert next(f for f in result["files"] if f["title"] == "Four")["appleMusicPath"] is None
+
+    def test_the_sync_uses_apple_music_s_path_for_a_moved_file(self, libraries):
+        server.load_apple_music_library(libraries["apple"])
+
+        dry = server.sync_cues_to_serato()
+
+        assert dry["filesToChange"] == 1 and dry["foundViaAppleMusic"] == 1
+        assert dry["skippedBecause"] == {"the file wasn't found at the Rekordbox path": 1}
+        assert dry["examples"][0]["file"] == str(libraries["moved"])
+
+        done = server.sync_cues_to_serato(dry_run=False, expected_files=1)
+
+        assert done["filesWritten"] == 1
+        assert [(c.index, c.position_ms) for c in read_cues(libraries["moved"])] == [(0, 2000)]
+
+    def test_the_sync_can_ignore_apple_music(self, libraries):
+        server.load_apple_music_library(libraries["apple"])
+
+        result = server.sync_cues_to_serato(use_apple_music_paths=False)
+
+        assert result["filesToChange"] == 0 and result["foundViaAppleMusic"] == 0
+
+    def test_without_an_apple_music_library_the_sync_is_unchanged(self, libraries):
+        assert server.sync_cues_to_serato()["filesToChange"] == 0

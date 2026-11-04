@@ -106,6 +106,7 @@ class SyncItem:
     legacy_location: Markers2Location | None = None
     legacy_new_data: bytes | None = None
     memory_cues_without_slot: int = 0
+    relocated_from: str | None = None  # the Rekordbox path, when the file was found elsewhere
 
     @property
     def regions(self) -> tuple[Region, ...]:
@@ -203,14 +204,23 @@ def _times(cues) -> tuple[tuple[int, int], ...]:
     return tuple(sorted((c.index + 1, c.position_ms) for c in cues))
 
 
-def _plan_track(track: Track, include_memory_cues: bool, default_color: str) -> SyncItem:
+def _plan_track(
+    track: Track, include_memory_cues: bool, default_color: str, moved_files: dict[str, str] | None = None
+) -> SyncItem:
     def skip(reason: str, **extra) -> SyncItem:
         return SyncItem(track.trackId, track.trackTitle, track.artist, path, "skip", reason, **extra)
 
     path = Path(track.filePath) if track.filePath else None
+    relocated_from = None
 
     if path is None:
         return skip("the track has no file path")
+
+    if not path.is_absolute():
+        return skip("not a local file (a streaming track)")
+
+    if not path.is_file() and moved_files and track.trackId in moved_files:
+        relocated_from, path = str(path), Path(moved_files[track.trackId])
 
     if path.suffix.lower() not in (".mp3", ".wav"):
         return skip(f"{path.suffix.lower() or 'this'} files aren't supported yet")
@@ -246,7 +256,7 @@ def _plan_track(track: Track, include_memory_cues: bool, default_color: str) -> 
         track.trackId, track.trackTitle, track.artist, path, "unchanged",
         before=before, after=_times(cues), timing=offset, location=location,
         new_data=new_data, legacy_location=legacy_location, legacy_new_data=legacy_new_data,
-        memory_cues_without_slot=without_slot,
+        memory_cues_without_slot=without_slot, relocated_from=relocated_from,
     )
 
     return replace(item, status="change") if item.regions else item
@@ -258,13 +268,18 @@ def build_sync_plan(
     include_memory_cues: bool = True,
     default_color: str = DEFAULT_COLOR,
     max_files: int = DEFAULT_MAX_FILES,
+    moved_files: dict[str, str] | None = None,
 ) -> SyncPlan:
-    """Work out, without changing anything, what the sync would do to each file."""
+    """Work out, without changing anything, what the sync would do to each file.
+
+    `moved_files` maps a track ID to the path of its file when it is no longer
+    where Rekordbox says (see library_reports.moved_file_paths).
+    """
     wanted = set(track_ids) if track_ids else None
     candidates = [t for t in tracks if t.cues and (wanted is None or t.trackId in wanted)]
     loops = sum(1 for t in candidates for c in t.cues if c.cueType == "loop")
 
-    items = [_plan_track(t, include_memory_cues, default_color) for t in candidates[:max_files]]
+    items = [_plan_track(t, include_memory_cues, default_color, moved_files) for t in candidates[:max_files]]
 
     return SyncPlan(tuple(items), loops_ignored=loops, not_planned=max(0, len(candidates) - max_files))
 

@@ -13,8 +13,9 @@ Early development. What works today:
 - Writing an **edited copy** of the XML with a default hot cue added to tracks that have none.
 
 - Copying Rekordbox cues into the Serato tags of your MP3 and WAV files, with Rekordbox winning, a journal and undo.
+- Reading an Apple Music export (tracks and playlists), matching its tracks to Rekordbox's, and finding files that moved.
 
-Not built yet: comparing the two libraries in detail, matching moved files, and M4A/AIFF support. See [ROADMAP.md](ROADMAP.md) for completed work, known issues and what's next.
+Not built yet: the drift reports between the two libraries, duplicates and playlist hygiene, writing playlists back, and M4A/AIFF support. See [ROADMAP.md](ROADMAP.md) for completed work, known issues and what's next.
 
 ## Setup
 
@@ -52,10 +53,13 @@ Start a new session (or run `/mcp`) and `cuebridge` should show as connected. Th
 | `search_tracks(query, has_cues, limit, offset)` | Lists tracks a page at a time. `query` words must all appear in the title, artist or file name. |
 | `get_track_cues(track_id)` | One track with all its cues: type, pad slot, name, time, loop end and color. |
 | `find_tracks_without_cues(limit, offset)` | Tracks that have no cues. |
+| `load_apple_music_library(path)` | Loads an Apple Music library exported as XML (**File → Library → Export Library**) and summarises it: tracks, formats, metadata gaps and every playlist with its size. |
+| `get_playlist_tracks(name, limit, offset)` | The tracks of one Apple Music playlist, in order, a page at a time. |
+| `find_missing_files(only_with_cues=True, limit, offset)` | Rekordbox tracks whose file isn't where Rekordbox says, and where Apple Music has it (matched by path, then file name, then title and artist; an unclear match is never guessed). Needs both libraries loaded. |
 | `set_default_cue(output_path, dry_run=True)` | Adds a hot cue A at 0:00 to every track with no cue or loop, in the loaded XML file (a backup is saved first). |
 | `duplicate_memory_cues_to_hot_cues(output_path, dry_run=True)` | Copies every memory cue to a hot cue at the same position, in the lowest free slots (A-H), in the loaded XML file. Memory cues are kept. A memory cue that already has a hot cue at the same time is skipped, so running it twice changes nothing. Cues beyond 8 are reported and not copied. |
 
-| `sync_cues_to_serato(dry_run=True, expected_files, track_ids, include_memory_cues=True)` | **Edits your audio files.** Copies the loaded Rekordbox library's hot cues (and memory cues, in free slots) into each file's Serato cue tag. Rekordbox wins. |
+| `sync_cues_to_serato(dry_run=True, expected_files, track_ids, include_memory_cues=True, use_apple_music_paths=True)` | **Edits your audio files.** Copies the loaded Rekordbox library's hot cues (and memory cues, in free slots) into each file's Serato cue tag. Rekordbox wins. If an Apple Music library is loaded, a file that moved is found there. |
 | `undo_serato_sync(journal, dry_run=True)` | Puts back the original cue bytes recorded by a sync. |
 
 Results are paged (at most 100 per call) so large libraries don't flood the assistant's context.

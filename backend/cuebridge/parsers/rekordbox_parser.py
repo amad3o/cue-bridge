@@ -1,6 +1,6 @@
-import re
 import xml.etree.ElementTree as ET
-from urllib.parse import unquote
+
+from cuebridge.parsers.paths import location_to_path
 
 # Rekordbox POSITION_MARK Type values.
 # 0 = cue, 1 = fade-in, 2 = fade-out, 3 = load marker, 4 = loop.
@@ -43,21 +43,6 @@ def _parse_color(attrib):
 
     r, g, b = (max(0, min(255, c)) for c in channels)
     return f"#{r:02x}{g:02x}{b:02x}"
-
-
-def _parse_location(location):
-    """Turn file://localhost/Users/me/My%20Song.mp3 into /Users/me/My Song.mp3."""
-    if not location:
-        return None
-
-    path = re.sub(r"^file://(localhost)?", "", location)
-    path = unquote(path)
-
-    # Windows paths arrive as /C:/Music/song.mp3
-    if re.match(r"^/[A-Za-z]:/", path):
-        path = path[1:]
-
-    return path
 
 
 def _parse_cue(mark, track_id, track_name, artist, file_path):
@@ -110,7 +95,7 @@ def parse_rekordbox_xml(xml_content: bytes):
         track_id = track.attrib.get("TrackID") or f"idx{position}"
         track_name = _text(track.attrib.get("Name"))
         artist = _text(track.attrib.get("Artist"))
-        file_path = _parse_location(track.attrib.get("Location"))
+        file_path = location_to_path(track.attrib.get("Location"))
 
         cues = []
 
@@ -127,6 +112,7 @@ def parse_rekordbox_xml(xml_content: bytes):
             "trackTitle": track_name,
             "artist": artist,
             "filePath": file_path,
+            "durationMs": _seconds_to_ms(track.attrib.get("TotalTime")),
             "firstBeatMs": _seconds_to_ms(first_tempo.attrib.get("Inizio")) if first_tempo is not None else None,
             "cues": cues,
         })
