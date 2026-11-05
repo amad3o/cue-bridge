@@ -61,6 +61,8 @@ class TestRegistration:
             "export_playlists_for_rekordbox",
             "sync_playlists_to_rekordbox",
             "undo_rekordbox_playlist_sync",
+            "fix_moved_files_in_rekordbox",
+            "undo_rekordbox_file_fix",
             "set_default_cue",
             "duplicate_memory_cues_to_hot_cues",
             "sync_cues_to_serato",

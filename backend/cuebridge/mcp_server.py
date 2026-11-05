@@ -600,6 +600,121 @@ def undo_rekordbox_playlist_sync(journal: str | None = None, dry_run: bool = Tru
     }
 
 
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+    )
+)
+@_translate_errors
+def fix_moved_files_in_rekordbox(
+    dry_run: bool = True,
+    expected_fixes: int | None = None,
+    database_path: str | None = None,
+) -> dict:
+    """Point Rekordbox tracks whose file was renamed or moved at the file Apple Music has.
+
+    This edits Rekordbox's own database (master.db). It needs the Apple Music
+    library loaded (load_apple_music_library). For every Rekordbox track whose
+    file is missing, the real file is found through Apple Music (same title and
+    artist, or the same file name), and only the track's path and file name are
+    changed. Cues, beat grids, playlists and everything else stay as they are.
+    The analysis files Rekordbox keeps under PIONEER/USBANLZ are not touched.
+
+    Not every broken track can be fixed this way, and the result says why:
+    - "alreadyInTheCollection": Rekordbox already has another row for the real
+      file (a duplicate left behind by the rename). Nothing is changed, because
+      repointing would make a second duplicate. Those are for the user to
+      decide on (the older row may hold cues or playlist entries).
+    - "noFileFound": Apple Music has no matching file.
+
+    - Call it with dry_run=true first (the default). Rekordbox may be open for
+      that. Show the user the list.
+    - Rekordbox must be closed to write. Then call with dry_run=false and
+      expected_fixes set to the "fixes" count from the dry run.
+    - Backup, journal and read-back verification work as in
+      sync_playlists_to_rekordbox; undo_rekordbox_file_fix reverses it.
+    """
+    music = _require_apple_library()
+    db_path = _db_target(database_path)
+    backend = rekordbox_db.default_backend()
+    snapshot = rekordbox_db.read_snapshot(db_path, backend)
+    plan = rekordbox_db.plan_relocations(snapshot, music)
+    running = rekordbox_db.rekordbox_running()
+
+    result = {
+        "dryRun": dry_run,
+        "database": str(db_path),
+        "rekordboxIsRunning": running,
+        "fixes": len(plan.relocations),
+        "willFix": [
+            {"track": r.title, "artist": r.artist, "from": r.old_path, "to": r.new_path}
+            for r in plan.relocations[:50]
+        ],
+        "alreadyInTheCollection": len(plan.already_in_collection),
+        "alreadyInTheCollectionExamples": [
+            {"track": t, "realFile": p} for t, p in plan.already_in_collection[:10]
+        ],
+        "noFileFound": len(plan.no_match),
+        "noFileFoundExamples": [{"track": t, "path": p} for t, p in plan.no_match[:10]],
+    }
+
+    if not plan.relocations:
+        result["summary"] = "Nothing to fix: no missing file has a single, unused real file in Apple Music."
+        return result
+
+    if dry_run:
+        result["summary"] = (
+            f"Would repoint {len(plan.relocations)} track(s) at their real files. Nothing has been written."
+            + (" Quit Rekordbox before applying." if running else "")
+        )
+        return result
+
+    if expected_fixes != len(plan.relocations):
+        raise ToolError(
+            f"This would fix {len(plan.relocations)} tracks, but expected_fixes was {expected_fixes!r}. "
+            "Run a dry run, show the user the number, and pass it as expected_fixes."
+        )
+
+    outcome = rekordbox_db.apply_relocations(plan, db_path, music, backend)
+    result["fixed"] = outcome.added
+    result["backup"] = str(outcome.backup)
+    result["journal"] = str(outcome.journal)
+    result["summary"] = (
+        f"Repointed {outcome.added} track(s) and verified the database. Backup: {outcome.backup}. "
+        f"To reverse this, call undo_rekordbox_file_fix (journal: {outcome.journal}). You can open Rekordbox now."
+    )
+    return result
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+    )
+)
+@_translate_errors
+def undo_rekordbox_file_fix(journal: str | None = None, dry_run: bool = True) -> dict:
+    """Put back the old paths that a fix_moved_files_in_rekordbox run changed.
+
+    `journal` is the path it reported; the most recent one is used if omitted.
+    A track is only restored if it still has the path that run wrote. Rekordbox
+    must be closed unless this is a dry run.
+    """
+    path = Path(journal).expanduser() if journal else rekordbox_db.latest_journal(prefix=rekordbox_db.PATH_JOURNALS)
+
+    if path is None or not path.is_file():
+        raise ToolError("No file-location journal found. Pass the journal path from the fix.")
+
+    outcome = rekordbox_db.undo_relocations(path, rekordbox_db.default_backend(), dry_run=dry_run)
+
+    return {
+        "dryRun": dry_run,
+        "journal": str(path),
+        "restored" if not dry_run else "wouldRestore": outcome.removed,
+        "skipped": [{"entry": e, "why": why} for e, why in outcome.skipped],
+        "summary": f"{'Would restore' if dry_run else 'Restored'} {len(outcome.removed)} track(s); {len(outcome.skipped)} skipped.",
+    }
+
+
 @mcp.tool(annotations=READ_ONLY)
 @_translate_errors
 def search_tracks(

@@ -60,6 +60,8 @@ Start a new session (or run `/mcp`) and `cuebridge` should show as connected. Th
 | `export_playlists_for_rekordbox(playlists, all_playlists=False, output_path, folder_name, dry_run=True)` | Adds Apple Music playlists to the Rekordbox XML (or to a separate file if `output_path` is given) so Rekordbox imports them in one step, replacing the drag and drop. By default only playlists that differ from Rekordbox are included. See [Getting playlists into Rekordbox](#getting-playlists-into-rekordbox). |
 | `sync_playlists_to_rekordbox(playlists, dry_run=True, expected_additions, database_path)` | **Edits Rekordbox's database.** Adds tracks that are in an Apple Music playlist but missing from the same Rekordbox playlist, at the end of the existing playlist (this is how an existing playlist can be updated; XML import can't). Needs no Rekordbox export. Needs [the optional database packages](#updating-rekordbox-playlists-directly). |
 | `undo_rekordbox_playlist_sync(journal, dry_run=True)` | Removes exactly the playlist entries a sync added. |
+| `fix_moved_files_in_rekordbox(dry_run=True, expected_fixes, database_path)` | Points Rekordbox tracks whose file was renamed or moved at the file Apple Music has (database; path and file name only). |
+| `undo_rekordbox_file_fix(journal, dry_run=True)` | Puts the old paths back. |
 | `set_default_cue(output_path, dry_run=True)` | Adds a hot cue A at 0:00 to every track with no cue or loop, in the loaded XML file (a backup is saved first). |
 | `duplicate_memory_cues_to_hot_cues(output_path, dry_run=True)` | Copies every memory cue to a hot cue at the same position, in the lowest free slots (A-H), in the loaded XML file. Memory cues are kept. A memory cue that already has a hot cue at the same time is skipped, so running it twice changes nothing. Cues beyond 8 are reported and not copied. |
 
@@ -115,6 +117,8 @@ Rekordbox can only create a playlist from an XML import; it never updates one th
 - **Checked afterwards.** The database is read again; every playlist must be exactly as planned and the track list unchanged, otherwise the backup is put back.
 - **Undo.** `undo_rekordbox_playlist_sync` removes exactly the rows a run added, if they are still there unchanged.
 - **Dry run first, and the count must match** (`expected_additions`), as with the Serato sync.
+
+**Fixing renamed files.** `fix_moved_files_in_rekordbox` uses the same safeguards (dry run, Rekordbox closed, backup, read-back check, journal and undo, count must match) to change the path and file name of a track whose file is missing, to the file Apple Music has for it. A track is left alone, and reported, when Rekordbox already has another row for the real file (a duplicate left behind by the rename; repointing would make a second one, and the older row may hold cues or playlist entries), or when Apple Music has no matching file. The analysis files under `PIONEER/USBANLZ` are not touched, and Rekordbox opening a repointed track has not been checked yet.
 
 It is not an officially supported way to edit Rekordbox, and a Rekordbox update could change the database format. It needs two optional packages:
 

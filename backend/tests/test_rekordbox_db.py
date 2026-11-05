@@ -28,6 +28,10 @@ class FakeWriter:
         playlist_ = next(p for p in self.state["playlists"] if p["id"] == playlist_id)
         playlist_["songs"] = [s for s in playlist_["songs"] if s[0] != song_id]
 
+    def relocate(self, content_id, path, file_name, org_path):
+        content = next(c for c in self.state["contents"] if c["id"] == content_id)
+        content.update(path=path, file_name=file_name, org_path=org_path)
+
     def commit(self):
         if self.backend.tamper:
             self.state["playlists"][0]["songs"].clear()  # damage something that was not part of the plan
@@ -55,7 +59,7 @@ class FakeBackend:
 
     def read(self, db_path: Path) -> rd.DbSnapshot:
         state = json.loads(db_path.read_text())
-        contents = tuple(rd.DbContent(c["id"], c["title"], c["artist"], c["path"], None) for c in state["contents"])
+        contents = tuple(rd.DbContent(c["id"], c["title"], c["artist"], c["path"], None, c.get("file_name"), c.get("org_path")) for c in state["contents"])
         playlists = tuple(
             rd.DbPlaylist(
                 p["id"], p["name"], None, p.get("folder", False), False, tuple(p.get("folders", ())),
@@ -424,3 +428,222 @@ class TestTools:
 
         with pytest.raises(ToolError, match="Rekordbox is running"):
             server.sync_playlists_to_rekordbox(dry_run=False, expected_additions=1)
+
+
+@pytest.fixture
+def files(tmp_path, env):
+    music = tmp_path / "music"
+    music.mkdir()
+    real = {name: music / name for name in ("1-01 Old.mp3", "1-02 Twice.mp3", "03 Same.mp3")}
+
+    for path in real.values():
+        path.write_bytes(b"audio")
+
+    state = {
+        "contents": [
+            {"id": "c1", "title": "Old", "artist": "X", "path": str(music / "01 Old.mp3"),
+             "file_name": "01 Old.mp3", "org_path": str(music / "01 Old.mp3")},
+            # Rekordbox already has a row for the real file of this one.
+            {"id": "c2", "title": "Twice", "artist": "X", "path": str(music / "02 Twice.mp3"),
+             "file_name": "02 Twice.mp3", "org_path": str(music / "02 Twice.mp3")},
+            {"id": "c3", "title": "Twice", "artist": "X", "path": str(real["1-02 Twice.mp3"]),
+             "file_name": "1-02 Twice.mp3", "org_path": str(real["1-02 Twice.mp3"])},
+            {"id": "c4", "title": "Nowhere", "artist": "X", "path": str(music / "gone.mp3"),
+             "file_name": "gone.mp3", "org_path": str(music / "gone.mp3")},
+            # Imported from another folder, then moved: the import location stays as it was.
+            {"id": "c5", "title": "Same", "artist": "X", "path": str(music / "old-03.mp3"),
+             "file_name": "old-03.mp3", "org_path": "/Users/me/Downloads/03.mp3"},
+            {"id": "c6", "title": "Fine", "artist": "X", "path": str(real["03 Same.mp3"]),
+             "file_name": "03 Same.mp3", "org_path": str(real["03 Same.mp3"])},
+        ],
+        "playlists": [{"id": "p1", "name": "Set", "songs": [song(1, "c1"), song(2, "c2"), song(3, "c5")]}],
+    }
+    env["db"].write_text(json.dumps(state))
+    tracks = [
+        music_track(1, "Old", "X", real["1-01 Old.mp3"]),
+        music_track(2, "Twice", "X", real["1-02 Twice.mp3"]),
+        music_track(5, "Same", "X", real["03 Same.mp3"]),
+    ]
+    # c5's real file is the one c6 already points at, so c5 is a duplicate, not a fix.
+    return {"music": parse_apple_music_plist(library_bytes(tracks, [playlist("Set", 1, 2, 5)])), "real": real}
+
+
+
+class TestRelocation:
+    """Tracks whose file was renamed, pointed at the file Apple Music has."""
+
+    def plan(self, env, files):
+        return rd.plan_relocations(snapshot(env), files["music"])
+
+    def test_a_renamed_file_is_pointed_at_the_real_one(self, env, files):
+        plan = self.plan(env, files)
+
+        (fix,) = plan.relocations
+        assert fix.content_id == "c1" and fix.new_path == str(files["real"]["1-01 Old.mp3"])
+        assert fix.new_file_name == "1-01 Old.mp3"
+        assert fix.new_org_path == fix.new_path  # the import location was the old path, so it follows
+
+    def test_a_real_file_another_row_already_has_is_not_pointed_at_twice(self, env, files):
+        plan = self.plan(env, files)
+
+        assert sorted(t for t, _ in plan.already_in_collection) == ["Same", "Twice"]
+
+    def test_a_track_apple_music_has_no_file_for_is_reported(self, env, files):
+        assert [t for t, _ in self.plan(env, files).no_match] == ["Nowhere"]
+
+    def test_the_import_location_stays_when_it_was_somewhere_else(self, tmp_path, env, files):
+        state = json.loads(env["db"].read_text())
+        state["contents"] = [c for c in state["contents"] if c["id"] != "c6"]
+        env["db"].write_text(json.dumps(state))
+
+        plan = self.plan(env, files)
+
+        fix = next(r for r in plan.relocations if r.content_id == "c5")
+        assert fix.new_path == str(files["real"]["03 Same.mp3"])
+        assert fix.new_org_path == "/Users/me/Downloads/03.mp3"
+
+    def apply(self, env, files):
+        return rd.apply_relocations(self.plan(env, files), env["db"], files["music"], env["backend"])
+
+    def test_only_the_path_and_file_name_change(self, env, files):
+        before = snapshot(env)
+
+        self.apply(env, files)
+
+        after = snapshot(env)
+        changed = [(b, a) for b, a in zip(before.contents, after.contents) if b != a]
+        assert [b.id for b, _ in changed] == ["c1"]
+        assert changed[0][1].path == str(files["real"]["1-01 Old.mp3"])
+        assert changed[0][1].file_name == "1-01 Old.mp3"
+        assert (changed[0][1].title, changed[0][1].artist) == (changed[0][0].title, changed[0][0].artist)
+        assert after.playlists == before.playlists
+
+    def test_a_backup_and_journal_are_made(self, env, files):
+        result = self.apply(env, files)
+
+        assert (result.backup / "master.db").is_file()
+        journal = json.loads(result.journal.read_text())
+        assert journal["state"] == "verified" and journal["relocations"][0]["oldFileName"] == "01 Old.mp3"
+        assert result.journal.name.startswith("rekordbox-paths-")
+
+    def test_rekordbox_must_be_closed(self, env, files, monkeypatch):
+        monkeypatch.setattr(rd, "rekordbox_running", lambda: True)
+        before = env["db"].read_bytes()
+
+        with pytest.raises(rd.DatabaseError, match="running|open"):
+            self.apply(env, files)
+
+        assert env["db"].read_bytes() == before
+
+    def test_a_plan_that_went_stale_is_refused(self, env, files):
+        plan = self.plan(env, files)
+        files["real"]["1-01 Old.mp3"].unlink()
+
+        with pytest.raises(rd.DatabaseError, match="changed since"):
+            rd.apply_relocations(plan, env["db"], files["music"], env["backend"])
+
+    def test_nothing_to_fix_is_refused(self, env, files):
+        with pytest.raises(rd.DatabaseError, match="Nothing to fix"):
+            rd.apply_relocations(rd.RelocationPlan(), env["db"], files["music"], env["backend"])
+
+    def test_a_failed_write_puts_the_backup_back(self, env, files):
+        before = env["db"].read_bytes()
+        env["backend"].commit_raises = True
+
+        with pytest.raises(rd.DatabaseError, match="backup was put back"):
+            self.apply(env, files)
+
+        assert env["db"].read_bytes() == before
+
+    def test_damage_found_afterwards_puts_the_backup_back(self, env, files):
+        before = env["db"].read_bytes()
+        env["backend"].tamper = True
+
+        with pytest.raises(rd.DatabaseError, match="Verification failed"):
+            self.apply(env, files)
+
+        assert env["db"].read_bytes() == before
+
+    def test_undo_puts_the_old_path_back(self, env, files):
+        original = snapshot(env)
+        result = self.apply(env, files)
+
+        outcome = rd.undo_relocations(result.journal, env["backend"])
+
+        assert outcome.removed == ["Old"]
+        assert snapshot(env) == original
+
+    def test_undo_leaves_a_track_whose_path_changed_since(self, env, files):
+        result = self.apply(env, files)
+        state = json.loads(env["db"].read_text())
+        state["contents"][0]["path"] = "/somewhere/else.mp3"
+        env["db"].write_text(json.dumps(state))
+
+        outcome = rd.undo_relocations(result.journal, env["backend"])
+
+        assert outcome.removed == [] and outcome.skipped[0][0] == "Old"
+        assert snapshot(env).contents[0].path == "/somewhere/else.mp3"
+
+    def test_undo_dry_run_changes_nothing(self, env, files):
+        result = self.apply(env, files)
+        fixed = env["db"].read_bytes()
+
+        outcome = rd.undo_relocations(result.journal, env["backend"], dry_run=True)
+
+        assert outcome.removed == ["Old"] and env["db"].read_bytes() == fixed
+
+    def test_a_playlist_journal_is_not_a_location_journal(self, env, tmp_path):
+        journal = tmp_path / "playlists.json"
+        journal.write_text(json.dumps({"database": str(env["db"]), "additions": []}))
+
+        with pytest.raises(rd.DatabaseError, match="not a file-location journal"):
+            rd.undo_relocations(journal, env["backend"])
+
+
+class TestRelocationTools:
+    @pytest.fixture(autouse=True)
+    def clean(self, env, files, monkeypatch):
+        apple_music_service.clear_cache()
+        server.reset_state()
+        monkeypatch.setattr(rd, "default_backend", lambda: env["backend"])
+        monkeypatch.setattr(rd, "find_database", lambda: env["db"])
+        monkeypatch.setattr(server, "_apple_path", None, raising=False)
+        self.files = files
+        yield
+        server.reset_state()
+
+    @pytest.fixture
+    def loaded(self, files, tmp_path):
+        tracks = [
+            music_track(1, "Old", "X", files["real"]["1-01 Old.mp3"]),
+            music_track(2, "Twice", "X", files["real"]["1-02 Twice.mp3"]),
+        ]
+        path = write_library(tmp_path / "Lib.xml", tracks, [playlist("Set", 1, 2)])
+        server.load_apple_music_library(str(path))
+
+    def test_a_dry_run_lists_the_fixes_and_the_rest(self, loaded):
+        result = server.fix_moved_files_in_rekordbox()
+
+        assert result["dryRun"] is True and result["fixes"] == 1
+        assert result["willFix"][0]["track"] == "Old"
+        assert result["alreadyInTheCollection"] == 1 and result["noFileFound"] == 2
+
+    def test_applying_needs_the_expected_count(self, loaded):
+        with pytest.raises(ToolError, match="expected_fixes"):
+            server.fix_moved_files_in_rekordbox(dry_run=False, expected_fixes=5)
+
+    def test_apply_then_undo(self, loaded, env):
+        original = env["db"].read_bytes()
+
+        done = server.fix_moved_files_in_rekordbox(dry_run=False, expected_fixes=1)
+        preview = server.undo_rekordbox_file_fix(done["journal"])
+        undone = server.undo_rekordbox_file_fix(done["journal"], dry_run=False)
+
+        assert done["fixed"] == 1 and "undo_rekordbox_file_fix" in done["summary"]
+        assert preview["wouldRestore"] == ["Old"]
+        assert undone["restored"] == ["Old"]
+        assert json.loads(env["db"].read_text()) == json.loads(original)
+
+    def test_undo_without_a_journal_is_a_clear_error(self):
+        with pytest.raises(ToolError, match="No file-location journal"):
+            server.undo_rekordbox_file_fix()
