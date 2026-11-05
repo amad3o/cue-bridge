@@ -72,12 +72,12 @@ Results are paged (at most 100 per call) so large libraries don't flood the assi
 
 These two tools **edit your `rekordbox.xml` in place**. That file is an export, and Rekordbox itself is unaffected, but you can lose cues you added to it.
 
-> **Known issue.** They rewrite the XML through an XML library and add a marker comment. Rekordbox stopped showing its `rekordbox xml` sidebar item for a file written that way, so it probably rejects their output. The playlist export no longer does this (it patches the text), and these two should follow. Until then, treat them as producing input for CueBridge's own tools, not for importing into Rekordbox.
+They insert only the new cue lines as text, in Rekordbox's own style, and every other byte of the file stays as it was (declaration, CRLF line endings, escaping, spacing; no marker comment). This is the same approach as the playlist export, because Rekordbox refused an XML library's rewrite of its file. Whether Rekordbox accepts an *edited* export has not been checked in the real application yet.
 
 So:
 
 - **Dry run by default.** With `dry_run=true` they report what would change and whether a backup would be made, and write nothing. Ask the assistant to show you that first.
-- **Backup first.** The first edit to a file that came from Rekordbox saves a timestamped copy next to it (`rekordbox.xml.backup-20261103-121017`) and checks it is identical. Edited files carry a marker comment (`<!-- Edited by CueBridge. -->`), so later edits to the same file don't pile up more backups. A fresh export from Rekordbox is backed up again.
+- **Backup first.** Every in-place edit saves a timestamped copy of the file as it was (`rekordbox.xml.backup-20261103-121017`) and checks it is identical. An edit that would change nothing writes nothing and makes no backup. With `output_path` a new file is created and an existing file is never overwritten.
 - **Atomic write.** The new XML goes to a temporary file that is swapped in, and file permissions are kept. An interrupted write can't leave a half-written file.
 - **Refuses stale plans.** If the file changed between planning and writing, for example because you re-exported from Rekordbox, nothing is written.
 - **Verified before saving.** The tools re-parse their own output and stop if anything other than the intended cues changed.

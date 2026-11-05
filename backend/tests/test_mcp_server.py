@@ -216,10 +216,10 @@ class TestSetDefaultCue:
         assert "Nothing to do" in result["summary"]
         assert len(backups_of(loaded)) == 1
 
-    def test_a_dry_run_after_the_first_edit_needs_no_backup(self, loaded):
+    def test_every_edit_in_place_backs_up_first(self, loaded):
         server.set_default_cue(dry_run=False)
 
-        assert server.duplicate_memory_cues_to_hot_cues()["backupFirst"] is False
+        assert server.duplicate_memory_cues_to_hot_cues()["backupFirst"] is True
 
     def test_output_path_saves_elsewhere_and_leaves_the_loaded_file(self, loaded, tmp_path):
         original = Path(loaded).read_bytes()
@@ -236,7 +236,7 @@ class TestSetDefaultCue:
         existing = tmp_path / "existing.xml"
         existing.write_bytes(b"precious")
 
-        with pytest.raises(ToolError, match="wasn't written by CueBridge"):
+        with pytest.raises(ToolError, match="already exists"):
             server.set_default_cue(output_path=str(existing), dry_run=False)
 
         assert existing.read_bytes() == b"precious"
@@ -328,7 +328,7 @@ class TestBothToolsEditTheSameFile:
         second = server.duplicate_memory_cues_to_hot_cues(dry_run=False)
 
         assert first["file"] == second["file"] == str(Path(loaded).resolve())
-        assert first["backup"] is not None and second["backup"] is None
+        assert first["backup"] is not None and second["backup"] is not None
 
         summary = server.load_rekordbox_library(loaded)
 
@@ -343,7 +343,7 @@ class TestBothToolsEditTheSameFile:
         server.set_default_cue(dry_run=False)
         server.duplicate_memory_cues_to_hot_cues(dry_run=False)
 
-        (backup,) = backups_of(loaded)
+        backup, _ = backups_of(loaded)  # the first one is from before any edit
         assert backup.read_bytes() == original
 
     def test_every_call_plans_from_the_current_file(self, loaded):

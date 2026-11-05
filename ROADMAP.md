@@ -49,7 +49,7 @@ The loop that was the goal now works end to end, with one remaining export:
 ## Known issues
 
 1. **Housekeeping.** `requirements.txt` doesn't pin a Python version. There is no CI or lint.
-2. **The two Rekordbox XML edit tools re-serialise the XML.** `set_default_cue` and `duplicate_memory_cues_to_hot_cues` rewrite the file through an XML library and add a marker comment. Rekordbox stopped showing its `rekordbox xml` sidebar item for a file written that way (single-quoted declaration, comments, LF instead of CRLF, different escaping and spacing), so it probably rejects their output too. They should move to the text patching the playlist export uses (section 2), or to the database (section 9).
+2. ~~The two Rekordbox XML edit tools re-serialised the XML.~~ Fixed: they now insert the new cue lines as text and keep every other byte (no marker comment). Every in-place edit now makes a backup, and a copy is never saved over an existing file. Rekordbox accepting an edited export is still unverified (see "Not yet verified").
 3. **53 Rekordbox tracks point at files Apple Music has since renamed** (for example `15 Linguine Limbs.mp3` is now `1-15 Linguine Limbs.mp3`), so they are broken in Rekordbox today. The playlist export can point them at the real files; nothing repairs the Rekordbox database yet (section 8, "Relocate moved files").
 4. **A Rekordbox export is still needed for cues and for the comparison with Rekordbox's collection** (section 9).
 5. **Rekordbox can only create a playlist from an XML import, never update one.** That is why updating an existing playlist goes through the database. An XML import of `r&b` made a second `r&b` in a new "Apple Music" folder.
@@ -81,7 +81,7 @@ backend/cuebridge/
 
 - [x] Read tools, with a library cache keyed on path, mtime and size.
 - [x] `set_default_cue` and `duplicate_memory_cues_to_hot_cues`: dry run by default, a verified backup of a fresh export, atomic writes, refusal if the file changed since planning. (On the real library the second adds 129 hot cues to 47 tracks, at most 5 per track.)
-- [ ] **Move both to text patching** (known issue 2) and drop the marker comment; use the playlist export's side-file approach for state. Verify, as for the playlist export, that removing the additions gives back the original file.
+- [x] **Moved both to text patching** (`patch_marks`), marker comment dropped, side-file note kept in step with the file.
 - [ ] Optional filters for `set_default_cue`, such as skipping very short tracks. A real export includes Pioneer sampler one-shots (`NOISE`, `SINEWAVE`), which get a cue too.
 - [ ] Claude Desktop registration is described in the README but untested.
 
@@ -174,7 +174,7 @@ The database reader already sees every track and playlist in the live collection
 
 Built and tested in code, but never checked in the real application. Most need the user, because only they can run Rekordbox and Serato.
 
-- [ ] **Rekordbox accepting the text-patched XML for editing tools** other than the playlist export (they still re-serialise; known issue 2).
+- [ ] **Rekordbox accepting a cue-edited XML** from `set_default_cue` and `duplicate_memory_cues_to_hot_cues` (now text-patched; known issue 2).
 - [ ] **Whether Rekordbox cloud / library sync** is affected by direct database edits (not known whether it is used).
 - [ ] **An MP3 synced to Serato and opened there**, and **colors and cue positions against Rekordbox** by ear on a few more tracks. The 5.5 ms MP3 offset was fitted on Lexicon-synced pairs from one library (matching 95 cues to within 1 ms).
 - [ ] **Sex, Smokin and Glue** (beat-grid-estimated MP3 timing), and what makes some of those files one frame off and others two.

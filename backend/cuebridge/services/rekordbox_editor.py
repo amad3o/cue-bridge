@@ -1,40 +1,40 @@
 """Edit a Rekordbox XML export.
 
-By default an edit is saved into the file itself. Because that changes a file
-the user cares about, the first edit to a file that came straight from
-Rekordbox saves a timestamped backup next to it, and every write is atomic:
-the new XML is built in memory, checked by parsing it again, written to a
-temporary file and swapped in, and only if the file hasn't changed since the
-edit was planned.
+The edits are made to the file's text: the new cue lines are slotted in and every
+other byte stays exactly as Rekordbox wrote it. The file is not parsed and
+written back, because Rekordbox rejects an XML export that went through an XML
+library (different declaration, line endings, escaping and spacing).
 
-Files CueBridge has edited carry a marker comment. That marker tells a fresh
-Rekordbox export (needs a backup) from a file that was already edited (doesn't),
-and it is the only kind of *other* file CueBridge will ever replace when asked
-to save a copy elsewhere.
+By default an edit is saved into the file itself. Because that changes a file
+the user cares about, every in-place edit saves a timestamped backup next to
+it first, and every write is atomic: the new XML is built in memory, checked by
+parsing it again, written to a temporary file and swapped in, and only if the
+file hasn't changed since the edit was planned. A copy saved elsewhere is only
+ever created, never overwriting a file that exists.
 """
 
 import filecmp
 import os
 import shutil
-import xml.etree.ElementTree as ET
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from cuebridge.parsers.rekordbox_parser import TYPE_CUE, TYPE_LOOP
+from cuebridge.parsers.rekordbox_parser import TYPE_CUE
 from cuebridge.services.cue_rules import plan_memory_to_hot
 from cuebridge.services.rekordbox_service import (
     LibraryError,
-    has_pending_playlists,
     parse_rekordbox_bytes,
+    pending_folder,
     read_library_bytes,
+    write_pending_note,
 )
 
-TRACK_INDENT = "\n      "
-MARK_TAIL_FALLBACK = "\n    "
-
-EDIT_MARKER = b"<!-- Edited by CueBridge. -->"
-MARKER_SEARCH_BYTES = 512
+_COLLECTION = re.compile(r"<COLLECTION\b(?:[^>\"']|\"[^\"]*\"|'[^']*')*?(?<!/)>.*?</COLLECTION>", re.S)
+_TRACK_OPEN = re.compile(r"""<TRACK\b(?:[^>"']|"[^"]*"|'[^']*')*>""")
+CLOSE_TAG = "</TRACK>"
+INDENT_STEP = "  "
 
 
 class OutputPathError(LibraryError):
@@ -90,21 +90,9 @@ class HotCueDuplicationPlan:
 Plan = DefaultCuePlan | HotCueDuplicationPlan
 
 
-def _is_cuebridge_file(path: Path) -> bool:
-    try:
-        with open(path, "rb") as handle:
-            if EDIT_MARKER in handle.read(MARKER_SEARCH_BYTES):
-                return True
-    except OSError:
-        return False
-
-    # Playlists added for importing leave no marker in the XML, only a side file that matches it.
-    return has_pending_playlists(path)
-
-
 def needs_backup(plan: Plan) -> bool:
-    """True if saving this plan first backs up the file (a fresh Rekordbox export)."""
-    return plan.target.in_place and not _is_cuebridge_file(plan.target.source)
+    """True if saving this plan first backs up the file (every in-place edit does)."""
+    return plan.target.in_place
 
 
 def _read_source(source: str | Path) -> tuple[Path, bytes, os.stat_result]:
@@ -138,46 +126,85 @@ def resolve_target(source_path: Path, stat: os.stat_result, output_path: str | P
     resolved = target.resolve()
 
     if resolved != source_path and resolved.exists():
-        if not resolved.is_file() or not _is_cuebridge_file(resolved):
-            raise OutputPathError(
-                f"{target} already exists and wasn't written by CueBridge, so it won't be "
-                "overwritten. Choose a different output_path or move it."
-            )
+        raise OutputPathError(f"{target} already exists, so it won't be overwritten. Choose a different output_path or move it.")
 
     return EditTarget(source_path, resolved, stat.st_mtime_ns, stat.st_size)
 
 
-def _has_cue(track: ET.Element) -> bool:
-    """True if the track already has a cue or loop (fade and load markers don't count)."""
-    return any(m.attrib.get("Type") in (TYPE_CUE, TYPE_LOOP) for m in track.findall("POSITION_MARK"))
-
-
-def _append_mark(track: ET.Element, position_ms: int, slot: int = 0, name: str = "") -> None:
-    mark = ET.Element(
-        "POSITION_MARK",
-        {"Name": name, "Type": TYPE_CUE, "Start": f"{position_ms / 1000:.3f}", "Num": str(slot)},
+def _attr(value: str) -> str:
+    """Escape an attribute value the way Rekordbox writes it."""
+    return (
+        value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&apos;")
     )
 
-    children = list(track)
 
-    if children:
-        # Keep the closing tag's indentation after the new element.
-        mark.tail = children[-1].tail or MARK_TAIL_FALLBACK
-        children[-1].tail = TRACK_INDENT
-    else:
-        # A self-closing <TRACK/> gains a child, so it needs its own whitespace.
-        track.text = TRACK_INDENT
-        mark.tail = MARK_TAIL_FALLBACK
+@dataclass(frozen=True)
+class NewMark:
+    """A cue to add to a track: a hot cue in `slot` (0 is A), or a memory cue with slot -1."""
 
-    track.append(mark)
+    position_ms: int
+    slot: int = 0
+    name: str = ""
+
+    def line(self) -> str:
+        return (
+            f'<POSITION_MARK Name="{_attr(self.name)}" Type="{TYPE_CUE}" '
+            f'Start="{self.position_ms / 1000:.3f}" Num="{self.slot}"/>'
+        )
 
 
-def _serialize(root: ET.Element) -> bytes:
-    """Serialize the XML with the working-copy marker right after the declaration."""
-    xml = ET.tostring(root, encoding="UTF-8", xml_declaration=True)
-    declaration, _, rest = xml.partition(b"\n")
+def _newline(text: str) -> str:
+    return "\r\n" if "\r\n" in text else "\n"
 
-    return declaration + b"\n" + EDIT_MARKER + b"\n" + rest
+
+def _line_indent(text: str, index: int) -> str:
+    """The whitespace at the start of the line holding `index`."""
+    start = text.rfind("\n", 0, index) + 1
+    match = re.match(r"[ \t]*", text[start:])
+    return match.group(0)
+
+
+def patch_marks(original: bytes, marks: dict[int, list[NewMark]]) -> bytes:
+    """Add cues to collection tracks (by position in the collection) as text, leaving every other byte alone."""
+    text = original.decode("utf-8")
+    newline = _newline(text)
+    collection = _COLLECTION.search(text)
+
+    if collection is None:
+        if marks:
+            raise AssertionError("The XML has no collection to add cues to.")
+        return original
+
+    opens = [m for m in _TRACK_OPEN.finditer(text, collection.start(), collection.end())]
+
+    for position in sorted(marks, reverse=True):
+        opening = opens[position]
+        indent = _line_indent(text, opening.start())
+        inner = indent + INDENT_STEP
+        lines = [f"{inner}{mark.line()}" for mark in marks[position]]
+
+        if opening.group(0).endswith("/>"):
+            # <TRACK .../> gains children, so it needs a closing tag.
+            head = opening.group(0)[:-2].rstrip()
+            replacement = head + ">" + newline + newline.join(lines) + newline + indent + CLOSE_TAG
+            text = text[: opening.start()] + replacement + text[opening.end() :]
+            continue
+
+        close = text.find(CLOSE_TAG, opening.end())
+
+        if close == -1 or close > collection.end():
+            raise AssertionError("A track in the XML has no closing tag.")
+
+        line_start = text.rfind("\n", 0, close) + 1
+
+        if line_start > opening.end() and text[line_start:close].strip() == "":
+            # The closing tag has its own line: put the cues on lines before it.
+            text = text[:line_start] + "".join(line + newline for line in lines) + text[line_start:]
+        else:
+            # Everything is on one line: break it up around the new cues.
+            text = text[:close] + newline + newline.join(lines) + newline + indent + text[close:]
+
+    return text.encode("utf-8")
 
 
 def build_default_cue_plan(
@@ -192,21 +219,19 @@ def build_default_cue_plan(
     # Validates the file with the same errors as every other entry point.
     before = parse_rekordbox_bytes(original)
 
-    root = ET.fromstring(original)
-    collection = root.find("COLLECTION")
-
+    marks: dict[int, list[NewMark]] = {}
     changed: list[str] = []
     skipped = 0
 
-    for position, track in enumerate(collection.findall("TRACK")):
-        if _has_cue(track):
+    for position, track in enumerate(before):
+        if track.cues:
             skipped += 1
             continue
 
-        _append_mark(track, position_ms)
-        changed.append(track.attrib.get("TrackID") or f"idx{position}")
+        marks[position] = [NewMark(position_ms)]
+        changed.append(track.trackId)
 
-    edited = _serialize(root)
+    edited = patch_marks(original, marks)
 
     _verify(before, edited, set(changed), position_ms)
 
@@ -247,19 +272,14 @@ def build_hot_cue_duplication_plan(
     # Validates the file with the same errors as every other entry point.
     before = parse_rekordbox_bytes(original)
 
-    root = ET.fromstring(original)
-    elements = root.find("COLLECTION").findall("TRACK")
-
-    if len(elements) != len(before):
-        raise AssertionError("Parsed tracks don't line up with the XML tracks.")
-
+    marks: dict[int, list[NewMark]] = {}
     changed: list[str] = []
     added: dict[str, set[tuple[int, int]]] = {}
     overflow: list[tuple[str, int]] = []
     already = 0
     cues_added = 0
 
-    for element, track in zip(elements, before):
+    for position, track in enumerate(before):
         result = plan_memory_to_hot(track.cues)
         already += result.already_duplicated
 
@@ -269,14 +289,12 @@ def build_hot_cue_duplication_plan(
         if not result.assignments:
             continue
 
-        for item in result.assignments:
-            _append_mark(element, item.cue.timeMs, slot=item.slot, name=item.cue.cueName or "")
-
+        marks[position] = [NewMark(a.cue.timeMs, a.slot, a.cue.cueName or "") for a in result.assignments]
         changed.append(track.trackId)
         added[track.trackId] = {(a.slot, a.cue.timeMs) for a in result.assignments}
         cues_added += len(result.assignments)
 
-    edited = _serialize(root)
+    edited = patch_marks(original, marks)
 
     _verify_duplication(before, edited, added)
 
@@ -356,9 +374,8 @@ def write_plan(plan: Plan) -> WriteResult:
     """Save the planned XML.
 
     In place: refuses if the file changed since it was planned, saves a backup
-    first if the file is a fresh Rekordbox export, then swaps the new XML in
-    atomically. Elsewhere: creates a new file, or replaces an existing file only
-    if CueBridge wrote it.
+    first, then swaps the new XML in
+    atomically. Elsewhere: creates a new file and never replaces one.
     """
     t = plan.target
 
@@ -372,25 +389,27 @@ def write_plan(plan: Plan) -> WriteResult:
                     "Nothing was written. Run the tool again."
                 )
 
-            backup = _make_backup(t.source) if not _is_cuebridge_file(t.source) else None
+            current_bytes = t.source.read_bytes()
+
+            if plan.xml == current_bytes:
+                return WriteResult(t.source, None)  # nothing would change, so no backup either
+
+            pending = pending_folder(t.source, current_bytes)
+            backup = _make_backup(t.source)
             _replace_atomically(t.source, plan.xml, mode_from=t.source)
+
+            if pending:
+                # The note about playlists waiting to be imported is tied to the file's contents.
+                write_pending_note(t.source, pending, plan.xml)
+
             return WriteResult(t.source, backup)
 
-        if not t.target.exists():
-            # "x" fails if the file appeared since planning, so nothing is clobbered.
-            with open(t.target, "xb") as handle:
-                handle.write(plan.xml)
-            return WriteResult(t.target, None)
-
-        if not t.target.is_file() or not _is_cuebridge_file(t.target):
-            raise OutputPathError(
-                f"{t.target} already exists and wasn't written by CueBridge, so it won't be overwritten."
-            )
-
-        _replace_atomically(t.target, plan.xml)
+        # "x" fails if the file appeared since planning, so nothing is clobbered.
+        with open(t.target, "xb") as handle:
+            handle.write(plan.xml)
         return WriteResult(t.target, None)
 
     except FileExistsError:
-        raise OutputPathError(f"{t.target} already exists and wasn't written by CueBridge.") from None
+        raise OutputPathError(f"{t.target} already exists, so it won't be overwritten.") from None
     except OSError as error:
         raise OutputPathError(f"Could not write {t.target}: {error.strerror}") from None

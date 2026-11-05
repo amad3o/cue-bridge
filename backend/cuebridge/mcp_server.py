@@ -701,17 +701,17 @@ def set_default_cue(output_path: str | None = None, dry_run: bool = True) -> dic
     """Add a hot cue A at 0:00 to every track that has no cue or loop.
 
     By default this edits the loaded Rekordbox XML file itself, in place. If
-    that file is a fresh Rekordbox export, a timestamped backup is saved next to
-    it first. The write is atomic, and it is refused if the file changed since
-    the dry run (for example after a re-export). Running it again changes
-    nothing, and other writing tools build on the same file, so their edits add
-    up.
+    a timestamped backup is saved next to it first. Only the new cue lines are
+    inserted, so the rest of the file stays exactly as Rekordbox wrote it. The
+    write is atomic, and it is refused if the file changed since the dry run
+    (for example after a re-export). Running it again changes nothing, and other
+    writing tools build on the same file, so their edits add up.
 
     `dry_run` is true by default and only reports what would change. Show the
     user that summary, including that the file would be edited in place, and get
     their go-ahead before calling again with dry_run=false. `output_path`
-    (optional, must end in .xml) saves the edited XML there instead and leaves
-    the loaded file alone.
+    (optional, must end in .xml, must not exist yet) saves the edited XML there
+    instead and leaves the loaded file alone.
     """
     library = _require_library()
     plan = rekordbox_editor.build_default_cue_plan(library.path, output_path=output_path)
@@ -752,15 +752,15 @@ def duplicate_memory_cues_to_hot_cues(output_path: str | None = None, dry_run: b
     memory cue beyond the 8 slots is reported as overflow and not copied.
 
     By default this edits the loaded Rekordbox XML file itself, in place, with
-    the same safeguards as set_default_cue: a timestamped backup of a fresh
-    Rekordbox export first, an atomic write, and a refusal if the file changed
+    the same safeguards as set_default_cue: a timestamped backup first, only the
+    new cue lines inserted, an atomic write, and a refusal if the file changed
     since the dry run.
 
     `dry_run` is true by default and only reports what would change. Show the
     user that summary, including that the file would be edited in place, and get
     their go-ahead before calling again with dry_run=false. `output_path`
-    (optional, must end in .xml) saves the edited XML there instead and leaves
-    the loaded file alone.
+    (optional, must end in .xml, must not exist yet) saves the edited XML there
+    instead and leaves the loaded file alone.
     """
     library = _require_library()
     plan = rekordbox_editor.build_hot_cue_duplication_plan(library.path, output_path=output_path)

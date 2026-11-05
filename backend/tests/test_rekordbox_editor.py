@@ -224,19 +224,23 @@ class TestInPlace:
         assert not result.backup.name.endswith(".xml")
         assert backups_of(source) == [result.backup]
 
-    def test_plan_reports_whether_a_backup_will_be_made(self, source):
+    def test_plan_reports_that_a_backup_will_be_made(self, source):
         assert editor.needs_backup(editor.build_default_cue_plan(source)) is True
 
         editor.write_plan(editor.build_default_cue_plan(source))
 
-        assert editor.needs_backup(editor.build_hot_cue_duplication_plan(source)) is False
+        assert editor.needs_backup(editor.build_hot_cue_duplication_plan(source)) is True
 
-    def test_later_edits_of_an_already_edited_file_make_no_more_backups(self, source):
+    def test_every_edit_backs_up_the_file_as_it_was(self, source):
+        original = source.read_bytes()
         editor.write_plan(editor.build_default_cue_plan(source))
+        after_first = source.read_bytes()
+
         second = editor.write_plan(editor.build_hot_cue_duplication_plan(source))
 
-        assert second.backup is None
-        assert len(backups_of(source)) == 1
+        assert second.backup.read_bytes() == after_first
+        assert len(backups_of(source)) == 2
+        assert backups_of(source)[0].read_bytes() == original
 
     def test_a_new_export_from_rekordbox_is_backed_up_again(self, source):
         editor.write_plan(editor.build_default_cue_plan(source))
@@ -296,11 +300,11 @@ class TestInPlace:
         assert editor.build_default_cue_plan(source).changed_track_ids == ()
         assert editor.build_hot_cue_duplication_plan(source).changed_track_ids == ()
 
-    def test_marker_appears_once_after_repeated_edits(self, source):
+    def test_no_marker_or_comment_is_added(self, source):
         editor.write_plan(editor.build_default_cue_plan(source))
         editor.write_plan(editor.build_hot_cue_duplication_plan(source))
 
-        assert source.read_bytes()[:300].count(editor.EDIT_MARKER) == 1
+        assert b"<!--" not in source.read_bytes() or b"<!--" in FIXTURE.read_bytes()
 
     def test_file_permissions_are_kept(self, source):
         source.chmod(0o640)
@@ -369,23 +373,24 @@ class TestSaveElsewhere:
 
         assert len(tracks_by_id((tmp_path / "copy.xml").read_bytes())["1001"].cues) == 1
 
-    def test_refuses_a_file_it_did_not_write(self, source, tmp_path):
+    def test_refuses_a_file_that_exists(self, source, tmp_path):
         existing = tmp_path / "existing.xml"
         existing.write_bytes(b"precious")
 
-        with pytest.raises(OutputPathError, match="wasn't written by CueBridge"):
+        with pytest.raises(OutputPathError, match="already exists"):
             editor.build_default_cue_plan(source, output_path=existing)
 
         assert existing.read_bytes() == b"precious"
 
-    def test_replaces_a_copy_that_it_wrote(self, source, tmp_path):
+    def test_never_replaces_a_copy_it_wrote_earlier(self, source, tmp_path):
         target = tmp_path / "copy.xml"
         editor.write_plan(editor.build_default_cue_plan(source, output_path=target))
-        second = editor.build_hot_cue_duplication_plan(source, output_path=target)
+        written = target.read_bytes()
 
-        editor.write_plan(second)
+        with pytest.raises(OutputPathError, match="already exists"):
+            editor.build_hot_cue_duplication_plan(source, output_path=target)
 
-        assert target.read_bytes() == second.xml
+        assert target.read_bytes() == written
 
     def test_refuses_a_file_that_appears_after_planning(self, source, tmp_path):
         target = tmp_path / "copy.xml"
@@ -397,22 +402,11 @@ class TestSaveElsewhere:
 
         assert target.read_bytes() == b"precious"
 
-    def test_refuses_a_copy_that_is_replaced_after_planning(self, source, tmp_path):
-        target = tmp_path / "copy.xml"
-        editor.write_plan(editor.build_default_cue_plan(source, output_path=target))
-        plan = editor.build_hot_cue_duplication_plan(source, output_path=target)
-        target.write_bytes(b"replaced by someone else")
-
-        with pytest.raises(OutputPathError, match="wasn't written by CueBridge"):
-            editor.write_plan(plan)
-
-        assert target.read_bytes() == b"replaced by someone else"
-
     def test_refuses_a_folder(self, source, tmp_path):
         folder = tmp_path / "folder.xml"
         folder.mkdir()
 
-        with pytest.raises(OutputPathError, match="wasn't written by CueBridge"):
+        with pytest.raises(OutputPathError, match="already exists"):
             editor.build_default_cue_plan(source, output_path=folder)
 
     def test_output_must_be_xml(self, source, tmp_path):
@@ -433,3 +427,131 @@ class TestSaveElsewhere:
         link.symlink_to(source)
 
         assert editor.build_default_cue_plan(source, output_path=link).target.in_place
+
+
+CRLF_XML = (
+    '<?xml version="1.0" encoding="UTF-8"?>\r\n\r\n'
+    '<DJ_PLAYLISTS Version="1.0.0">\r\n'
+    '  <COLLECTION Entries="4">\r\n'
+    '    <TRACK TrackID="1" Name="Plain &amp; Simple &gt; Fine" Artist="A"\r\n'
+    '           Location="file://localhost/Volumes/X/a.wav">\r\n'
+    '      <TEMPO Inizio="0.100" Bpm="120.00" Metro="4/4" Battito="1"/>\r\n'
+    '    </TRACK>\r\n'
+    '    <TRACK TrackID="2" Name="Empty" Artist="B"/>\r\n'
+    '    <TRACK TrackID="3" Name="Has cue" Artist="C">\r\n'
+    '      <POSITION_MARK Name="" Type="0" Start="1.000" Num="0" Red="40" Green="226" Blue="20"/>\r\n'
+    '    </TRACK>\r\n'
+    '    <TRACK TrackID="4" Name="One line" Artist="D"><TEMPO Inizio="0.1" Bpm="100.00" Metro="4/4" Battito="1"/></TRACK>\r\n'
+    "  </COLLECTION>\r\n"
+    "  <PLAYLISTS>\r\n"
+    '    <NODE Type="0" Name="ROOT" Count="1">\r\n'
+    '      <NODE Name="p" Type="1" KeyType="0" Entries="1">\r\n'
+    '        <TRACK Key="1"/>\r\n'
+    "      </NODE>\r\n"
+    "    </NODE>\r\n"
+    "  </PLAYLISTS>\r\n"
+    "</DJ_PLAYLISTS>"
+).encode()
+
+
+class TestTextPatching:
+    @pytest.fixture
+    def crlf(self, tmp_path) -> Path:
+        path = tmp_path / "rb.xml"
+        path.write_bytes(CRLF_XML)
+        return path
+
+    def test_every_original_line_is_kept_in_order(self, crlf):
+        plan = editor.build_default_cue_plan(crlf)
+
+        original = CRLF_XML.split(b"\r\n")
+        edited = plan.xml.split(b"\r\n")
+        position = 0
+
+        for line in original:
+            if line in (b'    <TRACK TrackID="2" Name="Empty" Artist="B"/>',
+                        b'    <TRACK TrackID="4" Name="One line" Artist="D"><TEMPO Inizio="0.1" Bpm="100.00" Metro="4/4" Battito="1"/></TRACK>'):
+                continue  # these two have to change shape to take a child
+            position = edited.index(line, position) + 1
+
+    def test_the_declaration_line_endings_and_escaping_are_untouched(self, crlf):
+        edited = editor.build_default_cue_plan(crlf).xml
+
+        assert edited.startswith(b'<?xml version="1.0" encoding="UTF-8"?>\r\n\r\n<DJ_PLAYLISTS')
+        assert b"\n" not in edited.replace(b"\r\n", b"")
+        assert b'Name="Plain &amp; Simple &gt; Fine"' in edited
+        assert b"<!--" not in edited
+
+    def test_added_lines_are_indented_inside_the_track(self, crlf):
+        edited = editor.build_default_cue_plan(crlf).xml
+
+        assert (
+            b'      <TEMPO Inizio="0.100" Bpm="120.00" Metro="4/4" Battito="1"/>\r\n'
+            b'      <POSITION_MARK Name="" Type="0" Start="0.000" Num="0"/>\r\n'
+            b"    </TRACK>\r\n"
+        ) in edited
+
+    def test_a_self_closing_track_gets_a_closing_tag(self, crlf):
+        edited = editor.build_default_cue_plan(crlf).xml
+
+        assert (
+            b'    <TRACK TrackID="2" Name="Empty" Artist="B">\r\n'
+            b'      <POSITION_MARK Name="" Type="0" Start="0.000" Num="0"/>\r\n'
+            b"    </TRACK>\r\n"
+        ) in edited
+
+    def test_a_track_on_one_line_is_broken_up(self, crlf):
+        plan = editor.build_default_cue_plan(crlf)
+
+        assert len(tracks_by_id(plan.xml)["4"].cues) == 1
+        assert b'<TEMPO Inizio="0.1" Bpm="100.00" Metro="4/4" Battito="1"/>\r\n' in plan.xml
+
+    def test_the_playlists_section_is_untouched(self, crlf):
+        edited = editor.build_default_cue_plan(crlf).xml
+
+        assert edited[edited.index(b"  <PLAYLISTS>"):] == CRLF_XML[CRLF_XML.index(b"  <PLAYLISTS>"):]
+
+    def test_a_greater_than_sign_inside_an_attribute_is_not_taken_for_the_end_of_the_tag(self, tmp_path):
+        xml = b'<DJ_PLAYLISTS><COLLECTION Entries="1"><TRACK TrackID="1" Name="a > b"/></COLLECTION></DJ_PLAYLISTS>'
+        path = tmp_path / "rb.xml"
+        path.write_bytes(xml)
+
+        edited = editor.build_default_cue_plan(path).xml
+
+        assert b'Name="a > b">' in edited
+        assert len(tracks_by_id(edited)["1"].cues) == 1
+
+    def test_cue_names_are_escaped(self, tmp_path):
+        xml = (
+            b'<DJ_PLAYLISTS><COLLECTION Entries="1"><TRACK TrackID="1" Name="a">\n'
+            b'  <POSITION_MARK Name="Drop &amp; &quot;go&quot;" Type="0" Start="5.000" Num="-1"/>\n'
+            b"</TRACK></COLLECTION></DJ_PLAYLISTS>"
+        )
+        path = tmp_path / "rb.xml"
+        path.write_bytes(xml)
+
+        plan = editor.build_hot_cue_duplication_plan(path)
+
+        assert b'Name="Drop &amp; &quot;go&quot;" Type="0" Start="5.000" Num="0"' in plan.xml
+        assert tracks_by_id(plan.xml)["1"].cues[-1].cueName == 'Drop & "go"'
+
+    def test_a_pending_playlist_note_follows_the_file(self, crlf):
+        from cuebridge.services.rekordbox_service import has_pending_playlists, write_pending_note
+
+        patched = CRLF_XML.replace(b"</PLAYLISTS>", b'  <NODE Name="Apple Music" Type="0" Count="0"></NODE>\r\n  </PLAYLISTS>')
+        crlf.write_bytes(patched)
+        write_pending_note(crlf, "Apple Music", patched)
+        assert has_pending_playlists(crlf)
+
+        editor.write_plan(editor.build_default_cue_plan(crlf))
+
+        assert has_pending_playlists(crlf)
+
+    def test_writing_a_plan_that_changes_nothing_makes_no_backup(self, source):
+        editor.write_plan(editor.build_default_cue_plan(source))
+        plan = editor.build_default_cue_plan(source)
+
+        result = editor.write_plan(plan)
+
+        assert result.backup is None
+        assert len(backups_of(source)) == 1
