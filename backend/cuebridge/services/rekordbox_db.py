@@ -41,6 +41,7 @@ from cuebridge.parsers.apple_music_xml import MusicLibrary
 from cuebridge.parsers.rekordbox_parser import RekordboxPlaylist
 from cuebridge.services import drift, library_reports
 from cuebridge.services.rekordbox_service import LibraryError
+from cuebridge.services.track_matcher import normalize_path
 
 DB_FILES = ("master.db", "master.db-wal", "master.db-shm", "masterPlaylists6.xml")
 SETTINGS_FILE = Path("~/Library/Application Support/Pioneer/rekordbox6/rekordbox3.settings")
@@ -618,7 +619,8 @@ def plan_relocations(
         for c in snapshot.contents
     ]
     missing = library_reports.find_missing_rekordbox_files(tracks, music, only_with_cues=False, exists=exists)
-    in_use = {c.path for c in snapshot.contents if c.path}
+    # The drive ignores case and Unicode form, so two spellings of one path are the same file.
+    in_use = {normalize_path(c.path) for c in snapshot.contents if c.path}
     plan = RelocationPlan()
     claimed: set[str] = set()
 
@@ -631,12 +633,13 @@ def plan_relocations(
             continue
 
         new_path = item.suggested_path
+        key = normalize_path(new_path)
 
-        if new_path in in_use or new_path in claimed:
+        if key in in_use or key in claimed:
             plan.already_in_collection.append((label[0], new_path))
             continue
 
-        claimed.add(new_path)
+        claimed.add(key)
         # The import location moves along only if it was the same as the current one.
         org_follows = content.org_path is None or content.org_path == content.path
         plan.relocations.append(Relocation(

@@ -488,6 +488,29 @@ class TestRelocation:
 
         assert sorted(t for t, _ in plan.already_in_collection) == ["Same", "Twice"]
 
+    def test_a_row_for_the_same_file_spelled_with_other_case_or_accents_counts_too(self, env, files):
+        real = str(files["real"]["1-01 Old.mp3"])
+        state = json.loads(env["db"].read_text())
+        # Rekordbox has the real file under a differently cased folder, and the name composed the other way.
+        state["contents"].append({"id": "c9", "title": "Old", "artist": "X", "path": real.upper(),
+                                  "file_name": "1-01 OLD.MP3", "org_path": real.upper()})
+        env["db"].write_text(json.dumps(state))
+
+        plan = self.plan(env, files)
+
+        assert plan.relocations == []
+        assert "Old" in [t for t, _ in plan.already_in_collection]
+
+    def test_two_missing_rows_for_one_real_file_are_not_both_pointed_at_it(self, env, files):
+        state = json.loads(env["db"].read_text())
+        state["contents"].append({"id": "c8", "title": "Old", "artist": "X", "path": "/gone/01 Old.mp3",
+                                  "file_name": "01 Old.mp3", "org_path": "/gone/01 Old.mp3"})
+        env["db"].write_text(json.dumps(state))
+
+        plan = self.plan(env, files)
+
+        assert [r.content_id for r in plan.relocations] == ["c1"]
+
     def test_a_track_apple_music_has_no_file_for_is_reported(self, env, files):
         assert [t for t, _ in self.plan(env, files).no_match] == ["Nowhere"]
 
