@@ -8,10 +8,12 @@ Everything runs on your own machine, and your library files are never uploaded a
 
 Early development, used on one real library. What works today:
 
-- **Cues, Rekordbox to Serato.** Copies Rekordbox's hot and memory cues into the Serato tags of your MP3 and WAV files (both of Serato's cue frames, with the timing difference between the programs corrected), with Rekordbox winning, a journal and undo.
+- **Cues, Rekordbox to Serato.** Reads Rekordbox's cues from its live database (no export) and copies the hot and memory cues into the Serato tags of your MP3 and WAV files (both of Serato's cue frames, with the timing difference between the programs corrected), with Rekordbox winning, a journal and undo.
 - **Apple Music, live.** Reads tracks and playlists straight from the open Music app, with no export.
 - **Comparing the libraries.** Matches tracks across Apple Music and Rekordbox (by path, file name, then title and artist), and shows which tracks and playlists differ, which files moved, and which Apple Music files are listed twice.
 - **Playlists into Rekordbox.** Adds new tracks to your existing Rekordbox playlists by editing Rekordbox's database (Rekordbox closed; backup, verification and undo), and prepares new tracks and playlists for Rekordbox's XML import.
+- **Checking everything is in sync.** `check_sync_status` gives one read-only report across the three apps and names the tool that fixes each difference.
+- **Repairing Rekordbox after Apple Music renames files.** Repoints moved files, reports stale duplicate rows, and removes them while keeping their cues, each with a dry run, backup, verification and undo.
 - **Rekordbox XML.** Reads a Rekordbox export (tracks, cues, playlists), and has two editing tools for it (see the warning under their safety section).
 
 Not built yet: reading memory/hot-cue slots F to H and loops from Rekordbox's database (only cues A to E are verified), comparing cues between the programs, metadata and playlist-hygiene reports, and M4A/AIFF cue support. See [ROADMAP.md](ROADMAP.md) for completed work, known issues and what's next.
@@ -167,6 +169,10 @@ A synced WAV has been opened in Serato and shows the new cues; MP3s are checked 
 
 > Do a dry run of sync_cues_to_serato and show me which files would change.
 
+> Check that Apple Music, Rekordbox and Serato are in sync. (Read-only; it tells you which tool fixes each difference.)
+
+> Report stale duplicates in Rekordbox, then clean them up. (Dry run first; Rekordbox must be closed to apply.)
+
 ## Development
 
 ```bash
@@ -182,7 +188,8 @@ backend/cuebridge/
   models.py        shared Pydantic models (Track, Cue)
   parsers/         file formats to models (Rekordbox XML, Apple Music XML, Serato tags)
   services/        path-based logic: loading and caching, queries and comparison, the Serato sync,
-                   Apple Music (file and live), Rekordbox XML edits, Rekordbox's database
+                   Apple Music (file and live), Rekordbox XML edits, Rekordbox's database (reading,
+                   writing, and its cues as Track/Cue), the three-way sync check
   mcp_server.py    the MCP server (a thin layer over services/)
   web/main.py      FastAPI app used by the prototype web UI
 frontend/          React + TypeScript prototype UI
