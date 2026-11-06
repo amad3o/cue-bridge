@@ -7,6 +7,7 @@ currently loaded library and translate errors for the assistant.
 """
 
 import functools
+from datetime import datetime
 from collections import Counter
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cuebridge.services import drift, library_queries, library_reports, playlist_export, rekordbox_db, rekordbox_editor, serato_sync
+from cuebridge.services import drift, library_queries, library_reports, playlist_export, rekordbox_db, rekordbox_editor, serato_sync, sync_check
 from cuebridge.parsers.apple_music_xml import MusicLibrary
 from cuebridge.services import apple_music_live
 from cuebridge.services import rekordbox_service
@@ -967,6 +968,70 @@ def undo_stale_duplicate_cleanup(journal: str | None = None, dry_run: bool = Tru
         "skipped": [{"item": e, "why": why} for e, why in outcome.skipped],
         "summary": f"{'Would undo' if dry_run else 'Undid'} {len(outcome.removed)} change(s); {len(outcome.skipped)} skipped.",
     }
+
+
+@mcp.tool(annotations=READ_ONLY)
+@_translate_errors
+def check_sync_status(
+    rekordbox_xml: str | None = None,
+    reload_apple_music: bool = False,
+    database_path: str | None = None,
+) -> dict:
+    """One read-only report: are Apple Music, Rekordbox and Serato in sync? Changes nothing.
+
+    It checks, and says which tool would fix each thing it finds:
+    - tracks and playlists, Apple Music against Rekordbox (playlisted Apple
+      tracks only). Rekordbox's live database is read through a copy when it
+      can be, and is preferred over the XML export, which may be days old. Rekordbox
+      may stay open.
+    - files: Rekordbox tracks whose file is missing, whether the real file can be
+      found, and stale duplicate rows.
+    - cues, Rekordbox against Serato: what sync_cues_to_serato would change. The
+      Rekordbox cues come from the XML export (the only place CueBridge reads
+      them), so the report warns when the database is newer than the export.
+      Serato's side is read from the cue tags in the audio files.
+
+    Apple Music is read live (the Music app must be open, and it takes about half
+    a minute) unless a library is already loaded; pass reload_apple_music=true to
+    read it again. `rekordbox_xml` is the export to read cues from (or use the one
+    already loaded with load_rekordbox_library). Each part that can't be checked is
+    reported as such instead of failing the whole report. Show the user the
+    summary and what needs attention; do not run any fix without asking.
+    """
+    global _apple_path, _apple_live, _current_path
+
+    if reload_apple_music or _apple_library() is None:
+        _apple_path, _apple_live = None, apple_music_live.read_live_library()
+
+    music = _require_apple_library()
+
+    if rekordbox_xml:
+        _current_path = get_rekordbox_library(rekordbox_xml).path
+
+    inputs = sync_check.Inputs(music=music)
+
+    try:
+        db_path = _db_target(database_path)
+        inputs.database_path = db_path
+        inputs.snapshot = rekordbox_db.read_snapshot(db_path, rekordbox_db.default_backend())
+        inputs.database_modified = datetime.fromtimestamp(
+            max(db_path.with_name(n).stat().st_mtime for n in ("master.db", "master.db-wal") if db_path.with_name(n).exists())
+        )
+    except Exception as error:  # a missing database, SQLCipher not set up, a locked file...
+        inputs.snapshot, inputs.snapshot_error = None, str(error)
+
+    if _current_path is not None:
+        library = get_rekordbox_library(_current_path)
+        inputs.xml_tracks, inputs.xml_playlists, inputs.xml_path = library.tracks, library.playlists, library.path
+        inputs.xml_modified = datetime.fromtimestamp(library.path.stat().st_mtime)
+
+        try:
+            moved = library_reports.moved_file_paths(library_reports.find_missing_rekordbox_files(library.tracks, music))
+            inputs.serato_plan = serato_sync.build_sync_plan(library.tracks, moved_files=moved)
+        except Exception as error:
+            inputs.serato_error = str(error)
+
+    return sync_check.build_report(inputs)
 
 
 @mcp.tool(annotations=READ_ONLY)

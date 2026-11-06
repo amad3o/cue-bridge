@@ -19,7 +19,7 @@ The loop that was the goal now works end to end, with one remaining export:
 
 ## Completed
 
-**MCP server** (`cuebridge/mcp_server.py`, stdio, `mcp` 2.x; registered in Claude Code). 23 tools, all returning compact, paginated output. The tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
+**MCP server** (`cuebridge/mcp_server.py`, stdio, `mcp` 2.x; registered in Claude Code). 24 tools, all returning compact, paginated output. The tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
 
 | Area | Tools |
 |---|---|
@@ -29,6 +29,7 @@ The loop that was the goal now works end to end, with one remaining export:
 | Apple Music | `load_apple_music_library` (live from the Music app, or an exported XML), `get_playlist_tracks` |
 | Compare | `compare_libraries`, `list_library_differences`, `find_missing_files` |
 | Playlists | `export_playlists_for_rekordbox` (XML, for getting new tracks in), `sync_playlists_to_rekordbox`, `undo_rekordbox_playlist_sync` (database) |
+| Overview | `check_sync_status` (read-only report across the three apps, naming the fix for each difference) |
 | Broken paths | `fix_moved_files_in_rekordbox`, `undo_rekordbox_file_fix` (database), `report_stale_duplicates` (read-only), `create_review_playlists`, `undo_rekordbox_review_playlists`, `clean_up_stale_duplicates`, `undo_stale_duplicate_cleanup` |
 
 **Core (Python)**

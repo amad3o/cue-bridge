@@ -67,6 +67,7 @@ class TestRegistration:
             "create_review_playlists",
             "clean_up_stale_duplicates",
             "undo_stale_duplicate_cleanup",
+            "check_sync_status",
             "undo_rekordbox_review_playlists",
             "set_default_cue",
             "duplicate_memory_cues_to_hot_cues",
