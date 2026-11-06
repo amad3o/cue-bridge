@@ -6,8 +6,8 @@ parser makes, so the Serato sync and the checks work from either.
 
 How the database stores a cue (`djmdCue`):
   * Kind 0 is a memory cue. Kinds 1, 2 and 3 are hot cues A, B and C; Kind 4 is not a
-    hot cue; Kinds 5 and 6 are D and E (checked against a real export). Nothing is known
-    about Kinds 4 and 7 and up, so those cues are left out and reported, not guessed into
+    hot cue; Kinds 5 and 6 are D and E, and 7, 8 and 9 are F, G and H (all checked against a real
+    export). Nothing is known about Kinds 4 and 10 and up, so those cues are left out and reported, not guessed into
     a slot. A hot cue that is also a memory cue has two rows at the same position.
   * OutMsec above 0 makes it a loop.
   * A hot cue's colour is an index into Rekordbox's own colour table. 0 or empty is
@@ -26,10 +26,29 @@ from typing import Callable
 from cuebridge.models import Cue, Track
 from cuebridge.services.rekordbox_db import DbCue, DbSnapshot
 
-# Colour index -> colour, only for the ones confirmed by comparing the database with an XML export.
-COLOR_TABLE = {41: "#e02823"}
-# Cue kind -> hot cue slot (0 is A), for the kinds checked against a real export.
-HOT_CUE_SLOTS = {1: 0, 2: 1, 3: 2, 5: 3, 6: 4}
+# Colour index -> colour, only for the ones confirmed by comparing the database with an XML export
+# (41 earlier; the other 16 from a test track whose cues were each given a different colour).
+COLOR_TABLE = {
+    41: "#e02823",
+    1: "#305aff",
+    5: "#50b4ff",
+    9: "#00e0ff",
+    14: "#1fa392",
+    18: "#10b176",
+    22: "#28e214",
+    26: "#a5e116",
+    30: "#b4be04",
+    32: "#c3af04",
+    38: "#e0641b",
+    42: "#e62828",
+    45: "#ff127b",
+    49: "#de44cf",
+    56: "#b432ff",
+    60: "#aa72ff",
+    62: "#6473ff",
+}
+# Cue kind -> hot cue slot (0 is A), for the kinds checked against a real export (7-9 are F-H).
+HOT_CUE_SLOTS = {1: 0, 2: 1, 3: 2, 5: 3, 6: 4, 7: 5, 8: 6, 9: 7}
 DEFAULT_SHARE = Path("~/Library/Pioneer/rekordbox/share")
 
 

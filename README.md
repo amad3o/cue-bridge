@@ -16,7 +16,7 @@ Early development, used on one real library. What works today:
 - **Repairing Rekordbox after Apple Music renames files.** Repoints moved files, reports stale duplicate rows, and removes them while keeping their cues, each with a dry run, backup, verification and undo.
 - **Rekordbox XML.** Reads a Rekordbox export (tracks, cues, playlists), and has two editing tools for it (see the warning under their safety section).
 
-Not built yet: reading memory/hot-cue slots F to H and loops from Rekordbox's database (only cues A to E are verified), comparing cues between the programs, metadata and playlist-hygiene reports, and M4A/AIFF cue support. See [ROADMAP.md](ROADMAP.md) for completed work, known issues and what's next.
+Not built yet: reading loops from Rekordbox's database (hot cues A to H and 17 colours are verified), the other colours, comparing cues between the programs, metadata and playlist-hygiene reports, and M4A/AIFF cue support. See [ROADMAP.md](ROADMAP.md) for completed work, known issues and what's next.
 
 ## Setup
 

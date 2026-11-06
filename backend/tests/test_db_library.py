@@ -31,16 +31,16 @@ class TestCues:
         ]
 
     def test_slots_follow_what_a_real_export_shows(self):
-        # Kinds 1-3 are A-C, 4 is skipped by Rekordbox, 5 and 6 are D and E.
-        (track,) = read(cue(1, 10), cue(2, 20), cue(3, 30), cue(5, 40), cue(6, 50)).tracks
+        # Kinds 1-3 are A-C, 4 is skipped by Rekordbox, 5 and 6 are D and E, 7-9 are F-H.
+        (track,) = read(*[cue(k, k * 10) for k in (1, 2, 3, 5, 6, 7, 8, 9)]).tracks
 
-        assert [c.cueIndex for c in track.cues] == [0, 1, 2, 3, 4]
+        assert [c.cueIndex for c in track.cues] == [0, 1, 2, 3, 4, 5, 6, 7]
 
     def test_kinds_nobody_has_checked_are_left_out_and_reported(self):
-        library = read(cue(1, 10), cue(4, 20), cue(7, 30), cue(9, 40))
+        library = read(cue(1, 10), cue(4, 20), cue(10, 30), cue(11, 40))
 
         assert [c.timeMs for c in library.tracks[0].cues] == [10]
-        assert sorted(k for _, k in library.unverified_cues) == [4, 7, 9]
+        assert sorted(k for _, k in library.unverified_cues) == [4, 10, 11]
 
     def test_a_loop_has_an_end(self):
         (track,) = read(cue(0, 1000, out_ms=5000), cue(1, 2000, out_ms=6000)).tracks
@@ -58,6 +58,12 @@ class TestCues:
         (track,) = read(cue(1, 10, color_index=41)).tracks
 
         assert track.cues[0].color == "#e02823"
+
+    def test_colours_confirmed_from_a_real_export(self):
+        # Pairs read from the database and the XML export of the same cues.
+        (track,) = read(cue(1, 10, color_index=49), cue(2, 20, color_index=14), cue(3, 30, color_index=45)).tracks
+
+        assert [c.color for c in track.cues] == ["#de44cf", "#1fa392", "#ff127b"]
 
     def test_an_unknown_colour_index_is_reported_not_guessed(self):
         library = read(cue(1, 10, color_index=17))

@@ -56,7 +56,7 @@ The loop that was the goal now works end to end with no manual export:
 1. **Housekeeping.** `requirements.txt` doesn't pin a Python version. There is no CI or lint.
 2. ~~The two Rekordbox XML edit tools re-serialised the XML.~~ Fixed: they now insert the new cue lines as text and keep every other byte (no marker comment). Every in-place edit now makes a backup, and a copy is never saved over an existing file. Rekordbox accepting an edited export is still unverified (see "Not yet verified").
 3. ~~Rekordbox tracks pointing at renamed files.~~ Repaired on the live database on 2026-11-05: 1 track repointed, 56 stale duplicate rows removed (51 with nothing the twin lacked, then 5 after their cues were copied to the twin). 20 tracks remain whose file is missing and not in Apple Music; they need a decision from the user (remove them in Rekordbox or find the files). Rekordbox opening the result is still to be confirmed.
-4. ~~A Rekordbox export is needed for cues.~~ Fixed: cues, beat grids and track lengths are read from the live database (`db_library.py`), checked against an XML export on the real library (45 of 46 tracks identical, colours included; the rest were stale rows and one cue moved after the export). Only cue slots A to E and colour index 41 are verified; any other slot or colour is left out and reported.
+4. ~~A Rekordbox export is needed for cues.~~ Fixed: cues, beat grids and track lengths are read from the live database (`db_library.py`), checked against an XML export on the real library (45 of 46 tracks identical, colours included; the rest were stale rows and one cue moved after the export). Hot cue slots A to H and 17 colour indexes are verified (from a test track on 2026-11-06: database index paired with the RGB in a fresh XML export); loops, kind 4 and any other colour are left out and reported.
 5. **Rekordbox can only create a playlist from an XML import, never update one.** That is why updating an existing playlist goes through the database. An XML import of `r&b` made a second `r&b` in a new "Apple Music" folder.
 6. **UI bugs to fix if the UI is revived (section 7).** The arrow-key listener is global (it fires while typing in the search box), row keys aren't stable, sort direction never flips, selection isn't reset when the filter changes, and the API URL is hardcoded to `localhost:8000`.
 
@@ -175,7 +175,8 @@ Only worth building if the text summaries in chat turn out not to be enough. Poi
 The database reader sees every track, playlist, cue and beat grid in the live collection, so the cue sync, the comparison and the playlist tools run with no export. What is left is verifying the rarer cue slots and colours, and the two XML editing tools.
 
 - [x] Read tracks, cues and the first beat from `master.db` into `Track` / `Cue` (`db_library.py`); `sync_cues_to_serato` and `check_sync_status` use it, with the XML as a fallback (`cue_source`).
-- [ ] Verify the database's numbering for hot cues F to H (kinds 7 and up; kind 4 is not a hot cue) and for loops, and the colour index table (only 41 is known). Cues in those slots are left out and reported until then.
+- [x] Hot cues F to H are kinds 7, 8 and 9, and 17 colour indexes are confirmed (41, 1, 5, 9, 14, 18, 22, 26, 30, 32, 38, 42, 45, 49, 56, 60, 62).
+- [ ] Verify how loops are stored (no loop exists in this library yet), and the colour indexes not yet seen. Those cues are left out and reported until then.
 - [ ] Still XML-only: `set_default_cue`, `duplicate_memory_cues_to_hot_cues`, and the XML playlist export.
 - [ ] Let `load_rekordbox_library` take the database as a source (`path` omitted), keeping the XML as an option. (`search_tracks`, `get_track_cues` and `find_tracks_without_cues` still read the loaded XML.)
 - [ ] Decide what replaces `set_default_cue` and `duplicate_memory_cues_to_hot_cues`: database writes with the same safeguards, or text-patched XML (known issue 2). Rekordbox must be closed for database writes.
@@ -186,7 +187,7 @@ The database reader sees every track, playlist, cue and beat grid in the live co
 Built and tested in code, but never checked in the real application. Most need the user, because only they can run Rekordbox and Serato.
 
 - [ ] **Rekordbox after the database cleanup.** Opening cleanly, the copied cues on Style, Exonym, Simple City, Sun Dog and Web Harvest, and the 51 + 5 removed rows being gone (the user opens Rekordbox and checks).
-- [ ] **Database cue numbering** for hot cues F to H, kind 4 and loops, and cue colour indexes other than 41 (none in this library).
+- [ ] **Database cue numbering** for loops, kind 4 and the cue colour indexes beyond the 17 confirmed.
 - [ ] **Rekordbox accepting a cue-edited XML** from `set_default_cue` and `duplicate_memory_cues_to_hot_cues` (now text-patched; known issue 2).
 - [ ] **Whether Rekordbox cloud / library sync** is affected by direct database edits (not known whether it is used).
 - [ ] **An MP3 synced to Serato and opened there**, and **colors and cue positions against Rekordbox** by ear on a few more tracks. The 5.5 ms MP3 offset was fitted on Lexicon-synced pairs from one library (matching 95 cues to within 1 ms).
