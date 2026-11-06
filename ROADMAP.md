@@ -19,7 +19,7 @@ The loop that was the goal now works end to end, with one remaining export:
 
 ## Completed
 
-**MCP server** (`cuebridge/mcp_server.py`, stdio, `mcp` 2.x; registered in Claude Code). 21 tools, all returning compact, paginated output. The tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
+**MCP server** (`cuebridge/mcp_server.py`, stdio, `mcp` 2.x; registered in Claude Code). 23 tools, all returning compact, paginated output. The tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
 
 | Area | Tools |
 |---|---|
@@ -29,7 +29,7 @@ The loop that was the goal now works end to end, with one remaining export:
 | Apple Music | `load_apple_music_library` (live from the Music app, or an exported XML), `get_playlist_tracks` |
 | Compare | `compare_libraries`, `list_library_differences`, `find_missing_files` |
 | Playlists | `export_playlists_for_rekordbox` (XML, for getting new tracks in), `sync_playlists_to_rekordbox`, `undo_rekordbox_playlist_sync` (database) |
-| Broken paths | `fix_moved_files_in_rekordbox`, `undo_rekordbox_file_fix` (database), `report_stale_duplicates` (read-only), `create_review_playlists`, `undo_rekordbox_review_playlists` |
+| Broken paths | `fix_moved_files_in_rekordbox`, `undo_rekordbox_file_fix` (database), `report_stale_duplicates` (read-only), `create_review_playlists`, `undo_rekordbox_review_playlists`, `clean_up_stale_duplicates`, `undo_stale_duplicate_cleanup` |
 
 **Core (Python)**
 
@@ -160,7 +160,7 @@ Only worth building if the text summaries in chat turn out not to be enough. Poi
 - [x] **Relocate moved files** (`fix_moved_files_in_rekordbox`, `undo_rekordbox_file_fix`): changes only a track's path, file name and (if it was the same) import path in `master.db`, with the playlist sync's safeguards. Verified on the real database (one track, loads and plays).
 - [x] **Stale duplicate report** (`report_stale_duplicates`): on the real library, of 56 broken rows with a twin, 51 are safe to remove (no cue or playlist entry the twin lacks) and 5 need a merge first (Style, Exonym, Simple City, Sun Dog, Web Harvest: they hold 6 to 8 cues the twin lacks).
 - [x] **Review playlists** (`create_review_playlists`): CueBridge does not delete rows itself. A track spans `djmdContent`, `djmdCue` and a JSON copy in `contentCue`, `contentFile` (analysis files) and `djmdMixerParam`, and Rekordbox's own Remove handles all of them, so CueBridge adds two playlists (51 safe, 5 with cues to check) and the user removes the tracks in Rekordbox. Playlists added to the real database on 2026-11-05 (journal `rekordbox-review-20261105-200931-00.json`); removal in Rekordbox and cleanup with `undo_rekordbox_review_playlists` still to do.
-- [ ] Merge the cues of the 5 rows that hold cues their twin lacks (cues are stored twice: `djmdCue` rows and a `contentCue` JSON copy).
+- [x] **Cleanup of stale duplicates** (`clean_up_stale_duplicates`): on request, CueBridge itself removes the 51 safe rows (deleting from `djmdContent`, `djmdCue`, `contentCue`, `contentFile`, `djmdMixerParam`, `djmdSongPlaylist`; none has foreign keys or triggers) and copies the 5 rows' cues to their twins (`djmdCue` rows and the `contentCue` JSON). Row-level undo from the journal. Verified end to end on a copy of the real database; not yet run on the live one.
 - [ ] Analysis files (`PIONEER/USBANLZ`) keep the old path inside them after a relocation; check Rekordbox doesn't mind.
 - [ ] **Fix tags in files** (title, artist, genre, BPM, key) from a reviewed list, journaled. Needs a careful ID3 write, bigger than the in-place cue overwrite.
 - [ ] **Serato crates from playlists** (optional: playing is from Apple Music playlists inside Serato).

@@ -858,6 +858,117 @@ def undo_rekordbox_review_playlists(journal: str | None = None, dry_run: bool = 
     }
 
 
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+    )
+)
+@_translate_errors
+def clean_up_stale_duplicates(
+    dry_run: bool = True,
+    expected_removals: int | None = None,
+    expected_cue_copies: int | None = None,
+    database_path: str | None = None,
+) -> dict:
+    """Remove stale duplicate rows from Rekordbox's database, and copy cues their twins lack.
+
+    This edits master.db and DELETES rows, so be careful. Needs the Apple
+    Music library loaded. It works on the broken rows that report_stale_duplicates
+    lists (a missing file whose real file Rekordbox already has under another row):
+    - a broken row with no cue and no playlist entry its twin lacks is REMOVED,
+      with the cues, analysis-file records, mixer settings and playlist entries
+      that belong to it (the audio files and analysis files on disk are never
+      touched; CueBridge's own review playlists don't count as use);
+    - a broken row with cues its twin lacks has those cues COPIED to the twin
+      (both places Rekordbox stores cues) and is KEPT;
+    - a broken row that is in a real playlist its twin isn't in is left alone and
+      reported.
+
+    - Call it with dry_run=true first (the default). Rekordbox may be open for
+      that. Show the user the numbers and the track names.
+    - Rekordbox must be closed to write. Then call with dry_run=false and
+      expected_removals / expected_cue_copies set to the counts from the dry run.
+    - Backup, read-back verification (restoring the backup on any difference) and a
+      journal that holds every removed row work as in the other database tools;
+      undo_stale_duplicate_cleanup puts the rows back and removes the copied cues.
+    """
+    music = _require_apple_library()
+    db_path = _db_target(database_path)
+    backend = rekordbox_db.default_backend()
+    snapshot = rekordbox_db.read_snapshot(db_path, backend)
+    plan = rekordbox_db.plan_cleanup(snapshot, music)
+    running = rekordbox_db.rekordbox_running()
+
+    result = {
+        "dryRun": dry_run,
+        "database": str(db_path),
+        "rekordboxIsRunning": running,
+        "removals": len(plan.removals),
+        "willRemove": [{"track": r.title, "artist": r.artist, "missingPath": r.path} for r in plan.removals[:60]],
+        "cueCopies": len(plan.merges),
+        "willCopyCues": [{"track": m.title, "cues": len(m.cue_ids)} for m in plan.merges],
+        "leftAlone": [{"track": t, "why": why} for t, why in plan.skipped],
+    }
+
+    if not plan.removals and not plan.merges:
+        result["summary"] = "Nothing to clean up."
+        return result
+
+    if dry_run:
+        result["summary"] = (
+            f"Would remove {len(plan.removals)} stale row(s) and copy cues to {len(plan.merges)} track(s). "
+            "Nothing has been written." + (" Quit Rekordbox before applying." if running else "")
+        )
+        return result
+
+    if (expected_removals, expected_cue_copies) != (len(plan.removals), len(plan.merges)):
+        raise ToolError(
+            f"This would remove {len(plan.removals)} rows and copy cues to {len(plan.merges)} tracks, but "
+            f"expected_removals was {expected_removals!r} and expected_cue_copies {expected_cue_copies!r}. "
+            "Run a dry run, show the user the numbers, and pass them."
+        )
+
+    outcome = rekordbox_db.apply_cleanup(plan, db_path, music, backend)
+    result["backup"] = str(outcome.backup)
+    result["journal"] = str(outcome.journal)
+    result["summary"] = (
+        f"Removed {len(plan.removals)} row(s), copied cues to {len(plan.merges)} track(s), and verified the database. "
+        f"Backup: {outcome.backup}. To reverse this, call undo_stale_duplicate_cleanup (journal: {outcome.journal}). "
+        "You can open Rekordbox now."
+    )
+    return result
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+    )
+)
+@_translate_errors
+def undo_stale_duplicate_cleanup(journal: str | None = None, dry_run: bool = True) -> dict:
+    """Reverse a clean_up_stale_duplicates run: take the copied cues off and put the removed rows back.
+
+    `journal` is the path it reported; the most recent one is used if omitted.
+    A removed row is only put back if no track has its ID now; copied cues are
+    only removed if they are still there. Rekordbox must be closed unless this is
+    a dry run.
+    """
+    path = Path(journal).expanduser() if journal else rekordbox_db.latest_journal(prefix=rekordbox_db.CLEANUP_JOURNALS)
+
+    if path is None or not path.is_file():
+        raise ToolError("No cleanup journal found. Pass the journal path from clean_up_stale_duplicates.")
+
+    outcome = rekordbox_db.undo_cleanup(path, rekordbox_db.default_backend(), dry_run=dry_run)
+
+    return {
+        "dryRun": dry_run,
+        "journal": str(path),
+        "undone" if not dry_run else "wouldUndo": outcome.removed,
+        "skipped": [{"item": e, "why": why} for e, why in outcome.skipped],
+        "summary": f"{'Would undo' if dry_run else 'Undid'} {len(outcome.removed)} change(s); {len(outcome.skipped)} skipped.",
+    }
+
+
 @mcp.tool(annotations=READ_ONLY)
 @_translate_errors
 def search_tracks(

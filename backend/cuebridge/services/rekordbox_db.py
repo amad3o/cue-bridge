@@ -89,6 +89,7 @@ class DbCue:
     content_id: str
     kind: int  # 0 is a memory cue, 1 and up are hot cues (1 is A)
     position_ms: int
+    id: str = ""
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,10 @@ class Writer(Protocol):
     def relocate(self, content_id: str, path: str, file_name: str | None, org_path: str | None) -> None: ...
     def create_playlist(self, name: str) -> str: ...
     def delete_playlist(self, playlist_id: str) -> None: ...
+    def delete_content(self, content_id: str) -> dict: ...
+    def restore_content(self, payload: dict) -> None: ...
+    def copy_cues(self, from_content_id: str, to_content_id: str, cue_ids: list[str]) -> dict: ...
+    def remove_copied_cues(self, to_content_id: str, token: dict) -> None: ...
     def commit(self) -> None: ...
     def rollback(self) -> None: ...
     def close(self) -> None: ...
@@ -147,6 +152,120 @@ class PyrekordboxWriter:
 
     def remove(self, playlist_id: str, song_id: str) -> None:
         self._db.remove_from_playlist(playlist_id, song_id)
+
+    # Everything that hangs off a track, besides the track itself. None of it has foreign keys or triggers.
+    _CONTENT_TABLES = ("djmdCue", "contentCue", "contentFile", "djmdMixerParam", "djmdSongPlaylist")
+    _CUE_JSON_FIELDS = (
+        "ContentID", "UUID", "ContentUUID", "InMsec", "InFrame", "InMpegFrame", "InMpegAbs", "OutMpegAbs", "OutMsec",
+        "OutFrame", "OutMpegFrame", "Kind", "ActiveLoop", "BeatLoopSize", "Color", "ColorTableIndex", "Comment",
+        "created_at", "updated_at", "ID",
+    )
+
+    def _sql(self, statement: str, **params):
+        from sqlalchemy import text
+
+        return self._db.session.execute(text(statement), params)
+
+    def _rows(self, table: str, column: str, value: str) -> list[dict]:
+        return [dict(r) for r in self._sql(f'select * from "{table}" where "{column}" = :v', v=value).mappings().all()]
+
+    def _insert(self, table: str, row: dict) -> None:
+        columns = ", ".join(f'"{c}"' for c in row)
+        marks = ", ".join(f":{i}" for i in range(len(row)))
+        self._sql(f'insert into "{table}" ({columns}) values ({marks})', **{str(i): v for i, v in enumerate(row.values())})
+
+    def delete_content(self, content_id: str) -> dict:
+        payload = {"djmdContent": self._rows("djmdContent", "ID", content_id)}
+
+        if len(payload["djmdContent"]) != 1:
+            raise DatabaseError(f"Track {content_id} is not in the database.")
+
+        for table in self._CONTENT_TABLES:
+            payload[table] = self._rows(table, "ContentID", content_id)
+            self._sql(f'delete from "{table}" where "ContentID" = :v', v=content_id)
+
+        self._sql('delete from "djmdContent" where "ID" = :v', v=content_id)
+
+        return payload
+
+    def restore_content(self, payload: dict) -> None:
+        playlists = {str(r["ID"]) for r in self._sql('select "ID" from "djmdPlaylist"').mappings().all()}
+
+        for table in ("djmdContent", *self._CONTENT_TABLES):
+            for row in payload.get(table, []):
+                if table == "djmdSongPlaylist" and str(row["PlaylistID"]) not in playlists:
+                    continue  # that playlist has been deleted since
+
+                self._insert(table, row)
+
+    def copy_cues(self, from_content_id: str, to_content_id: str, cue_ids: list[str]) -> dict:
+        import json
+        import uuid
+        from datetime import datetime
+
+        target = self._rows("djmdContent", "ID", to_content_id)
+
+        if len(target) != 1:
+            raise DatabaseError(f"Track {to_content_id} is not in the database.")
+
+        stamp = datetime.now().astimezone()
+        db_stamp = stamp.strftime("%Y-%m-%d %H:%M:%S.") + f"{stamp.microsecond // 1000:03d} " + stamp.strftime("%z")[:3] + ":" + stamp.strftime("%z")[3:]
+        json_stamp = stamp.strftime("%Y-%m-%dT%H:%M:%S.") + f"{stamp.microsecond // 1000:03d}" + stamp.strftime("%z")[:3] + ":" + stamp.strftime("%z")[3:]
+        used = {r["ID"] for r in self._sql('select "ID" from "djmdCue"').mappings().all()}
+        new_uuids: dict[str, str] = {}
+        created, entries = [], []
+
+        for cue_id in cue_ids:
+            (source,) = self._rows("djmdCue", "ID", cue_id)
+
+            if str(source["ContentID"]) != str(from_content_id):
+                raise DatabaseError(f"Cue {cue_id} doesn't belong to track {from_content_id}.")
+
+            new_id = str(uuid.uuid4().int % 4_000_000_000)
+
+            while new_id in used:
+                new_id = str(uuid.uuid4().int % 4_000_000_000)
+
+            used.add(new_id)
+            # A hot cue and its memory cue share one UUID in Rekordbox, so their copies do too.
+            new_uuid = new_uuids.setdefault(source["UUID"], str(uuid.uuid4()))
+            row = {
+                **source, "ID": new_id, "ContentID": to_content_id, "ContentUUID": target[0]["UUID"], "UUID": new_uuid,
+                "created_at": db_stamp, "updated_at": db_stamp,
+            }
+            self._insert("djmdCue", row)
+            created.append(new_id)
+            entries.append({k: (json_stamp if k in ("created_at", "updated_at") else row.get(k)) for k in self._CUE_JSON_FIELDS})
+
+        existing = self._rows("contentCue", "ContentID", to_content_id)
+
+        if existing:
+            previous = existing[0]["Cues"]
+            merged = json.loads(previous or "[]") + entries
+            self._sql('update "contentCue" set "Cues" = :c where "ID" = :i', c=json.dumps(merged, separators=(",", ":")), i=existing[0]["ID"])
+            token = {"cueIds": created, "contentCue": {"previous": previous, "id": existing[0]["ID"]}}
+        else:
+            row_id = str(uuid.uuid4())
+            self._insert("contentCue", {
+                "ID": row_id, "ContentID": to_content_id, "Cues": json.dumps(entries, separators=(",", ":")),
+                "rb_cue_count": None, "UUID": str(uuid.uuid4()), "rb_data_status": 0, "rb_local_data_status": 0,
+                "rb_local_deleted": 0, "rb_local_synced": 0, "usn": None, "rb_local_usn": None,
+                "created_at": db_stamp, "updated_at": db_stamp,
+            })
+            token = {"cueIds": created, "contentCue": {"created": row_id}}
+
+        return token
+
+    def remove_copied_cues(self, to_content_id: str, token: dict) -> None:
+        for cue_id in token["cueIds"]:
+            self._sql('delete from "djmdCue" where "ID" = :i and "ContentID" = :c', i=cue_id, c=to_content_id)
+
+        info = token["contentCue"]
+
+        if "created" in info:
+            self._sql('delete from "contentCue" where "ID" = :i', i=info["created"])
+        else:
+            self._sql('update "contentCue" set "Cues" = :c where "ID" = :i', c=info["previous"], i=info["id"])
 
     def create_playlist(self, name: str) -> str:
         return str(self._db.create_playlist(name).ID)
@@ -220,7 +339,7 @@ class PyrekordboxBackend:
                 ))
 
             cues = tuple(
-                DbCue(str(c.ContentID), int(c.Kind or 0), int(c.InMsec or 0)) for c in db.get_cue().all()
+                DbCue(str(c.ContentID), int(c.Kind or 0), int(c.InMsec or 0), str(c.ID)) for c in db.get_cue().all()
             )
 
             return DbSnapshot(contents, tuple(playlists), cues)
@@ -421,6 +540,7 @@ def _save_journal(path: Path, journal: dict) -> None:
 PLAYLIST_JOURNALS = "rekordbox-playlists"
 PATH_JOURNALS = "rekordbox-paths"
 REVIEW_JOURNALS = "rekordbox-review"
+CLEANUP_JOURNALS = "rekordbox-cleanup"
 
 
 def _journal_path(directory: Path, prefix: str = PLAYLIST_JOURNALS) -> Path:
@@ -851,6 +971,10 @@ class DuplicatePair:
         return "safe_to_remove"
 
 
+def _covered(cue: DbCue, others: list[DbCue]) -> bool:
+    return any(o.kind == cue.kind and abs(o.position_ms - cue.position_ms) <= CUE_TOLERANCE_MS for o in others)
+
+
 def describe_duplicates(plan: RelocationPlan, snapshot: DbSnapshot) -> list[DuplicatePair]:
     """For each broken row that has a twin holding the real file: what each row has (cues, playlists)."""
     contents = {c.id: c for c in snapshot.contents}
@@ -861,7 +985,8 @@ def describe_duplicates(plan: RelocationPlan, snapshot: DbSnapshot) -> list[Dupl
         cues.setdefault(cue.content_id, []).append(cue)
 
     for playlist in snapshot.playlists:
-        if playlist.is_plain:
+        # CueBridge's own review playlists say nothing about whether a row is used.
+        if playlist.is_plain and playlist.name not in (SAFE_PLAYLIST, MERGE_PLAYLIST):
             for content_id in set(playlist.content_ids):
                 playlists.setdefault(content_id, []).append("/".join((*playlist.folders, playlist.name)))
 
@@ -874,14 +999,11 @@ def describe_duplicates(plan: RelocationPlan, snapshot: DbSnapshot) -> list[Dupl
             tuple(sorted(playlists.get(content_id, []))),
         )
 
-    def covered(cue: DbCue, others: list[DbCue]) -> bool:
-        return any(o.kind == cue.kind and abs(o.position_ms - cue.position_ms) <= CUE_TOLERANCE_MS for o in others)
-
     pairs = []
 
     for broken_id, good_id in plan.duplicates:
         broken, good = summary(broken_id), summary(good_id)
-        missing = sum(1 for c in cues.get(broken_id, []) if not covered(c, cues.get(good_id, [])))
+        missing = sum(1 for c in cues.get(broken_id, []) if not _covered(c, cues.get(good_id, [])))
         pairs.append(DuplicatePair(
             contents[broken_id].title, contents[broken_id].artist, broken, good, missing,
             tuple(p for p in broken.playlists if p not in good.playlists),
@@ -1049,6 +1171,230 @@ def undo_review_playlists(journal_path: Path, backend: Backend, dry_run: bool = 
         writer.rollback()
         writer.close()
         raise DatabaseError(f"Removing the playlists failed: {error}") from None
+
+    writer.close()
+    journal["state"] = "undone"
+    _save_journal(Path(journal_path), journal)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Cleaning up stale duplicate rows
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RowRemoval:
+    broken_id: str
+    good_id: str
+    title: str | None
+    artist: str | None
+    path: str | None
+
+
+@dataclass(frozen=True)
+class CueMerge:
+    broken_id: str
+    good_id: str
+    title: str | None
+    cue_ids: tuple[str, ...]  # the cues on the broken row that the good row lacks
+    cues: tuple[tuple[int, int], ...]  # (kind, position in ms), for showing
+
+
+@dataclass
+class CleanupPlan:
+    removals: list[RowRemoval] = field(default_factory=list)  # broken rows that hold nothing the twin lacks
+    merges: list[CueMerge] = field(default_factory=list)  # cues to copy to the twin; the broken row is kept
+    skipped: list[tuple[str, str]] = field(default_factory=list)  # (title, why)
+
+
+def plan_cleanup(snapshot: DbSnapshot, music: MusicLibrary, exists=os.path.exists) -> CleanupPlan:
+    """Rows to remove, cues to copy, and rows left alone, for the broken rows that have a twin."""
+    pairs = describe_duplicates(plan_relocations(snapshot, music, exists), snapshot)
+    cues: dict[str, list[DbCue]] = {}
+
+    for cue in snapshot.cues:
+        cues.setdefault(cue.content_id, []).append(cue)
+
+    plan = CleanupPlan()
+
+    for pair in sorted(pairs, key=lambda p: ((p.title or "").casefold(), p.broken.content_id)):
+        broken, good = pair.broken.content_id, pair.good.content_id
+
+        if pair.verdict == "safe_to_remove":
+            plan.removals.append(RowRemoval(broken, good, pair.title, pair.artist, pair.broken.path))
+        elif pair.playlists_only_on_broken:
+            plan.skipped.append((pair.title or broken, "it is in " + ", ".join(pair.playlists_only_on_broken) + " and its twin isn't"))
+        else:
+            lacking = [c for c in cues.get(broken, []) if not _covered(c, cues.get(good, []))]
+
+            if any(not c.id for c in lacking):
+                raise DatabaseError("The database reader didn't return cue IDs, so cues can't be copied.")
+
+            plan.merges.append(CueMerge(
+                broken, good, pair.title, tuple(c.id for c in lacking), tuple((c.kind, c.position_ms) for c in lacking),
+            ))
+
+    return plan
+
+
+def _cleanup_key(plan: CleanupPlan) -> tuple:
+    return (
+        tuple((r.broken_id, r.good_id) for r in plan.removals),
+        tuple((m.broken_id, m.good_id, m.cue_ids) for m in plan.merges),
+    )
+
+
+def _cue_key(cues) -> list[tuple[str, int, int]]:
+    return sorted((c.content_id, c.kind, c.position_ms) for c in cues)
+
+
+def apply_cleanup(plan: CleanupPlan, db_path: Path, music: MusicLibrary, backend: Backend, exists=os.path.exists) -> ApplyResult:
+    """Copy the planned cues, then remove the planned rows with everything attached, verified, journaled, undoable."""
+    _require_rekordbox_closed()
+
+    if not plan.removals and not plan.merges:
+        raise DatabaseError("Nothing to clean up.")
+
+    before = read_snapshot(db_path, backend)
+
+    if _cleanup_key(plan_cleanup(before, music, exists)) != _cleanup_key(plan):
+        raise DatabaseError("Rekordbox's database or the files changed since this was planned. Nothing was written. Run a dry run again.")
+
+    backup = _backup_database(db_path, backend, before)
+    journal_path = _journal_path(cuebridge_home() / "undo", CLEANUP_JOURNALS)
+    journal = {
+        "version": JOURNAL_VERSION, "kind": "cleanup", "createdAt": datetime.now().isoformat(timespec="seconds"),
+        "database": str(db_path), "backup": str(backup), "state": "pending",
+        "merges": [{"brokenId": m.broken_id, "goodId": m.good_id, "title": m.title, "cueIds": list(m.cue_ids), "token": None} for m in plan.merges],
+        "removals": [{"contentId": r.broken_id, "goodId": r.good_id, "title": r.title, "payload": None} for r in plan.removals],
+    }
+    _save_journal(journal_path, journal)
+
+    writer = backend.open_for_write(db_path)
+
+    try:
+        for entry in journal["merges"]:
+            entry["token"] = writer.copy_cues(entry["brokenId"], entry["goodId"], entry["cueIds"])
+
+        for entry in journal["removals"]:
+            entry["payload"] = writer.delete_content(entry["contentId"])
+
+        journal["state"] = "writing"
+        _save_journal(journal_path, journal)
+        writer.commit()
+    except Exception as error:
+        try:
+            writer.rollback()
+        except Exception:
+            pass
+        writer.close()
+        _restore(backup, db_path)
+        journal["state"] = "failed"
+        _save_journal(journal_path, journal)
+        raise DatabaseError(f"Writing to the database failed and the backup was put back: {error}") from None
+
+    writer.close()
+    journal["state"] = "written"
+    _save_journal(journal_path, journal)
+
+    removed = {r.broken_id for r in plan.removals}
+    expected_playlists = []
+
+    for p in before.playlists:
+        kept = [(song, content) for song, content in zip(p.song_ids, p.content_ids) if content not in removed]
+        expected_playlists.append((p.id, p.name, tuple(k[0] for k in kept), tuple(k[1] for k in kept)))
+
+    expected_cues = [c for c in before.cues if c.content_id not in removed]
+    expected_cues += [DbCue(m.good_id, kind, ms) for m in plan.merges for kind, ms in m.cues]
+
+    try:
+        after = read_snapshot(db_path, backend)
+        problems = []
+
+        if after.contents != tuple(c for c in before.contents if c.id not in removed):
+            problems.append("the track list isn't exactly as planned")
+
+        if _cue_key(after.cues) != _cue_key(expected_cues):
+            problems.append("the cues aren't exactly as planned")
+
+        if [(p.id, p.name, p.song_ids, p.content_ids) for p in after.playlists] != expected_playlists:
+            problems.append("the playlists aren't exactly as planned")
+    except Exception as error:
+        problems = [f"the database couldn't be read back ({error})"]
+
+    if problems:
+        _restore(backup, db_path)
+        journal["state"] = "reverted"
+        _save_journal(journal_path, journal)
+        raise DatabaseError("Verification failed (" + "; ".join(problems) + ") and the backup was put back.")
+
+    journal["state"] = "verified"
+    _save_journal(journal_path, journal)
+
+    return ApplyResult(journal_path, backup, len(plan.removals) + len(plan.merges))
+
+
+def undo_cleanup(journal_path: Path, backend: Backend, dry_run: bool = False) -> UndoResult:
+    """Take the copied cues off again and put the removed rows back, each only if it is safe to."""
+    try:
+        journal = json.loads(Path(journal_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise DatabaseError(f"Could not read the journal {journal_path}.") from None
+
+    if journal.get("kind") != "cleanup":
+        raise DatabaseError(f"{journal_path} is not a cleanup journal.")
+
+    if not dry_run:
+        _require_rekordbox_closed()
+
+    db_path = Path(journal["database"])
+    snapshot = read_snapshot(db_path, backend)
+    present = {c.id for c in snapshot.contents}
+    cue_ids = {c.id for c in snapshot.cues}
+    result = UndoResult()
+    uncopy, restore = [], []
+
+    for entry in journal["merges"]:
+        label = f"cues copied to {entry['title'] or entry['goodId']}"
+
+        if entry["goodId"] not in present or not entry.get("token"):
+            result.skipped.append((label, "the track is gone or nothing was written"))
+        elif not set(entry["token"]["cueIds"]) & cue_ids:
+            result.skipped.append((label, "they are no longer there"))
+        else:
+            uncopy.append(entry)
+            result.removed.append(label)
+
+    for entry in journal["removals"]:
+        label = f"row of {entry['title'] or entry['contentId']}"
+
+        if not entry.get("payload"):
+            result.skipped.append((label, "it was never removed"))
+        elif entry["contentId"] in present:
+            result.skipped.append((label, "a track with that ID is already there"))
+        else:
+            restore.append(entry)
+            result.removed.append(label)
+
+    if dry_run or not (uncopy or restore):
+        return result
+
+    writer = backend.open_for_write(db_path)
+
+    try:
+        for entry in uncopy:
+            writer.remove_copied_cues(entry["goodId"], entry["token"])
+
+        for entry in restore:
+            writer.restore_content(entry["payload"])
+
+        writer.commit()
+    except Exception as error:
+        writer.rollback()
+        writer.close()
+        raise DatabaseError(f"Undoing failed: {error}") from None
 
     writer.close()
     journal["state"] = "undone"

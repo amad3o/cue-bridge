@@ -28,6 +28,41 @@ class FakeWriter:
         playlist_ = next(p for p in self.state["playlists"] if p["id"] == playlist_id)
         playlist_["songs"] = [s for s in playlist_["songs"] if s[0] != song_id]
 
+    def delete_content(self, content_id):
+        content = next(c for c in self.state["contents"] if c["id"] == content_id)
+        cues = [c for c in self.state.get("cues", []) if c[0] == content_id]
+        songs = [[p["id"], s[0], s[1]] for p in self.state["playlists"] for s in p["songs"] if s[1] == content_id]
+        self.state["contents"].remove(content)
+        self.state["cues"] = [c for c in self.state.get("cues", []) if c[0] != content_id]
+
+        for p in self.state["playlists"]:
+            p["songs"] = [s for s in p["songs"] if s[1] != content_id]
+
+        return {"content": content, "cues": cues, "songs": songs}
+
+    def restore_content(self, payload):
+        self.state["contents"].append(payload["content"])
+        self.state.setdefault("cues", []).extend(payload["cues"])
+        existing = {p["id"]: p for p in self.state["playlists"]}
+
+        for playlist_id, song_id, content_id in payload["songs"]:
+            if playlist_id in existing:
+                existing[playlist_id]["songs"].append([song_id, content_id])
+
+    def copy_cues(self, from_id, to_id, cue_ids):
+        made = []
+
+        for cue_id in cue_ids:
+            source = next(c for c in self.state["cues"] if c[3] == cue_id and c[0] == from_id)
+            self.counter += 1
+            made.append(f"copy-{self.counter}")
+            self.state["cues"].append([to_id, source[1], source[2], made[-1]])
+
+        return {"cueIds": made}
+
+    def remove_copied_cues(self, to_id, token):
+        self.state["cues"] = [c for c in self.state["cues"] if not (c[0] == to_id and c[3] in token["cueIds"])]
+
     def create_playlist(self, name):
         self.counter += 1
         playlist_id = f"new-playlist-{self.backend.runs}-{self.counter}"
@@ -44,6 +79,9 @@ class FakeWriter:
     def commit(self):
         if self.backend.tamper:
             self.state["playlists"][0]["songs"].clear()  # damage something that was not part of the plan
+
+        if getattr(self.backend, "tamper_cues", False):
+            self.state.setdefault("cues", []).append(["c1", 1, 123, "stray"])  # a cue nobody planned
 
         self.path.write_text(json.dumps(self.state))
         self.backend.runs += 1
@@ -76,7 +114,7 @@ class FakeBackend:
             )
             for p in state["playlists"]
         )
-        cues = tuple(rd.DbCue(c[0], c[1], c[2]) for c in state.get("cues", []))
+        cues = tuple(rd.DbCue(c[0], c[1], c[2], c[3] if len(c) > 3 else "") for c in state.get("cues", []))
         return rd.DbSnapshot(contents, playlists, cues)
 
     def open_for_write(self, db_path: Path):
@@ -826,6 +864,221 @@ class TestReviewPlaylists:
 
         with pytest.raises(rd.DatabaseError, match="not a review-playlist journal"):
             rd.undo_review_playlists(journal, env["backend"])
+
+
+@pytest.fixture
+def cleanup_env(env, files):
+    """c2 and c5 are broken rows with twins c3 and c6. c2 holds nothing its twin lacks; c5 has cues c6 lacks."""
+    state = json.loads(env["db"].read_text())
+    state["playlists"] = [
+        {"id": "p1", "name": "Set", "songs": [song(1, "c1"), song(3, "c6")]},
+        {"id": "pr", "name": rd.SAFE_PLAYLIST, "songs": [["r1", "c2"], ["r2", "c5"]]},
+    ]
+    state["cues"] = [["c5", 1, 1000, "k1"], ["c5", 0, 1000, "k2"], ["c3", 1, 7000, "k3"], ["c2", 1, 7010, "k4"]]
+    env["db"].write_text(json.dumps(state))
+    return files["music"]
+
+
+def key(snap):
+    return (
+        sorted((c.id, c.path) for c in snap.contents),
+        sorted((c.content_id, c.kind, c.position_ms) for c in snap.cues),
+        sorted((p.id, p.name, tuple(sorted(zip(p.song_ids, p.content_ids)))) for p in snap.playlists),
+    )
+
+
+class TestCleanup:
+    def plan(self, env, music):
+        return rd.plan_cleanup(snapshot(env), music)
+
+    def apply(self, env, music):
+        return rd.apply_cleanup(self.plan(env, music), env["db"], music, env["backend"])
+
+    def test_rows_that_lose_nothing_are_removed_and_rows_with_cues_get_them_copied(self, env, cleanup_env):
+        plan = self.plan(env, cleanup_env)
+
+        assert [r.broken_id for r in plan.removals] == ["c2"]
+        assert [(m.broken_id, m.good_id, m.cue_ids) for m in plan.merges] == [("c5", "c6", ("k1", "k2"))]
+        assert plan.skipped == []
+
+    def test_a_cue_the_twin_already_has_is_not_copied(self, env, cleanup_env):
+        state = json.loads(env["db"].read_text())
+        state["cues"].append(["c6", 1, 1010, "k5"])  # same slot, 10 ms apart
+        env["db"].write_text(json.dumps(state))
+
+        (merge,) = self.plan(env, cleanup_env).merges
+
+        assert merge.cue_ids == ("k2",)
+
+    def test_a_row_in_a_real_playlist_its_twin_is_not_in_is_left_alone(self, env, cleanup_env):
+        state = json.loads(env["db"].read_text())
+        state["playlists"][0]["songs"].append(["x", "c2"])
+        env["db"].write_text(json.dumps(state))
+
+        plan = self.plan(env, cleanup_env)
+
+        assert plan.removals == [] and plan.skipped[0][0] == "Twice"
+
+    def test_the_cues_are_copied_the_row_is_removed_and_nothing_else_changes(self, env, cleanup_env):
+        before = snapshot(env)
+
+        self.apply(env, cleanup_env)
+
+        after = snapshot(env)
+        assert [c.id for c in after.contents] == [c.id for c in before.contents if c.id != "c2"]
+        assert sorted((c.content_id, c.kind, c.position_ms) for c in after.cues if c.content_id == "c6") == [("c6", 0, 1000), ("c6", 1, 1000)]
+        assert [c for c in after.cues if c.content_id == "c5"] == [c for c in before.cues if c.content_id == "c5"]
+        assert not any(c.content_id == "c2" for c in after.cues)
+        review = next(p for p in after.playlists if p.name == rd.SAFE_PLAYLIST)
+        assert review.content_ids == ("c5",)
+        assert next(p for p in after.playlists if p.name == "Set").content_ids == ("c1", "c6")
+
+    def test_a_backup_and_a_journal_holding_the_removed_row_are_made(self, env, cleanup_env):
+        result = self.apply(env, cleanup_env)
+
+        journal = json.loads(result.journal.read_text())
+        assert journal["state"] == "verified" and result.journal.name.startswith("rekordbox-cleanup-")
+        assert journal["removals"][0]["payload"]["content"]["id"] == "c2"
+        assert (result.backup / "master.db").is_file()
+
+    def test_rekordbox_must_be_closed(self, env, cleanup_env, monkeypatch):
+        plan = self.plan(env, cleanup_env)
+        monkeypatch.setattr(rd, "rekordbox_running", lambda: True)
+        before = env["db"].read_bytes()
+
+        with pytest.raises(rd.DatabaseError):
+            rd.apply_cleanup(plan, env["db"], cleanup_env, env["backend"])
+
+        assert env["db"].read_bytes() == before
+
+    def test_a_stale_plan_is_refused(self, env, cleanup_env):
+        plan = self.plan(env, cleanup_env)
+        state = json.loads(env["db"].read_text())
+        state["cues"].append(["c2", 1, 99999, "k9"])  # now the broken row has a cue its twin lacks
+        env["db"].write_text(json.dumps(state))
+
+        with pytest.raises(rd.DatabaseError, match="changed since"):
+            rd.apply_cleanup(plan, env["db"], cleanup_env, env["backend"])
+
+    def test_nothing_to_clean_up_is_refused(self, env, cleanup_env):
+        with pytest.raises(rd.DatabaseError, match="Nothing to clean up"):
+            rd.apply_cleanup(rd.CleanupPlan(), env["db"], cleanup_env, env["backend"])
+
+    def test_a_failed_write_puts_the_backup_back(self, env, cleanup_env):
+        before = env["db"].read_bytes()
+        env["backend"].commit_raises = True
+
+        with pytest.raises(rd.DatabaseError, match="backup was put back"):
+            self.apply(env, cleanup_env)
+
+        assert env["db"].read_bytes() == before
+
+    def test_damage_found_afterwards_puts_the_backup_back(self, env, cleanup_env):
+        before = env["db"].read_bytes()
+        env["backend"].tamper = True
+
+        with pytest.raises(rd.DatabaseError, match="Verification failed"):
+            self.apply(env, cleanup_env)
+
+        assert env["db"].read_bytes() == before
+
+    def test_an_unplanned_cue_found_afterwards_puts_the_backup_back(self, env, cleanup_env):
+        before = env["db"].read_bytes()
+        env["backend"].tamper_cues = True
+
+        with pytest.raises(rd.DatabaseError, match="cues aren't exactly as planned"):
+            self.apply(env, cleanup_env)
+
+        assert env["db"].read_bytes() == before
+
+    def test_undo_puts_everything_back(self, env, cleanup_env):
+        original = key(snapshot(env))
+        result = self.apply(env, cleanup_env)
+
+        outcome = rd.undo_cleanup(result.journal, env["backend"])
+
+        assert len(outcome.removed) == 2
+        assert key(snapshot(env)) == original
+
+    def test_undo_dry_run_changes_nothing(self, env, cleanup_env):
+        result = self.apply(env, cleanup_env)
+        done = env["db"].read_bytes()
+
+        outcome = rd.undo_cleanup(result.journal, env["backend"], dry_run=True)
+
+        assert len(outcome.removed) == 2 and env["db"].read_bytes() == done
+
+    def test_undo_does_not_restore_a_row_whose_id_is_taken(self, env, cleanup_env):
+        result = self.apply(env, cleanup_env)
+        state = json.loads(env["db"].read_text())
+        state["contents"].append({"id": "c2", "title": "New", "artist": "Y", "path": "/new.mp3"})
+        env["db"].write_text(json.dumps(state))
+
+        outcome = rd.undo_cleanup(result.journal, env["backend"])
+
+        assert any("already there" in why for _, why in outcome.skipped)
+        assert next(c for c in snapshot(env).contents if c.id == "c2").title == "New"
+
+    def test_undo_skips_playlist_entries_of_a_playlist_deleted_since(self, env, cleanup_env):
+        result = self.apply(env, cleanup_env)
+        state = json.loads(env["db"].read_text())
+        state["playlists"] = [p for p in state["playlists"] if p["id"] != "pr"]
+        env["db"].write_text(json.dumps(state))
+
+        rd.undo_cleanup(result.journal, env["backend"])
+
+        assert any(c.id == "c2" for c in snapshot(env).contents)
+        assert all(p.id != "pr" for p in snapshot(env).playlists)
+
+    def test_other_journals_are_not_cleanup_journals(self, env, tmp_path):
+        journal = tmp_path / "x.json"
+        journal.write_text(json.dumps({"database": str(env["db"]), "kind": "review"}))
+
+        with pytest.raises(rd.DatabaseError, match="not a cleanup journal"):
+            rd.undo_cleanup(journal, env["backend"])
+
+
+class TestCleanupTools:
+    @pytest.fixture(autouse=True)
+    def clean(self, env, cleanup_env, tmp_path, files, monkeypatch):
+        apple_music_service.clear_cache()
+        server.reset_state()
+        monkeypatch.setattr(rd, "default_backend", lambda: env["backend"])
+        monkeypatch.setattr(rd, "find_database", lambda: env["db"])
+        tracks = [
+            music_track(2, "Twice", "X", files["real"]["1-02 Twice.mp3"]),
+            music_track(5, "Same", "X", files["real"]["03 Same.mp3"]),
+        ]
+        server.load_apple_music_library(str(write_library(tmp_path / "Lib.xml", tracks, [playlist("Set", 2, 5)])))
+        yield
+        server.reset_state()
+
+    def test_a_dry_run_lists_what_would_happen(self, env):
+        before = env["db"].read_bytes()
+
+        result = server.clean_up_stale_duplicates()
+
+        assert (result["removals"], result["cueCopies"]) == (1, 1)
+        assert result["willCopyCues"] == [{"track": "Same", "cues": 2}]
+        assert env["db"].read_bytes() == before
+
+    def test_applying_needs_both_counts(self):
+        with pytest.raises(ToolError, match="expected_removals"):
+            server.clean_up_stale_duplicates(dry_run=False, expected_removals=1)
+
+    def test_apply_then_undo(self, env):
+        original = key(snapshot(env))
+
+        done = server.clean_up_stale_duplicates(dry_run=False, expected_removals=1, expected_cue_copies=1)
+        preview = server.undo_stale_duplicate_cleanup(done["journal"])
+        server.undo_stale_duplicate_cleanup(done["journal"], dry_run=False)
+
+        assert "undo_stale_duplicate_cleanup" in done["summary"] and len(preview["wouldUndo"]) == 2
+        assert key(snapshot(env)) == original
+
+    def test_undo_without_a_journal_is_a_clear_error(self):
+        with pytest.raises(ToolError, match="No cleanup journal"):
+            server.undo_stale_duplicate_cleanup()
 
 
 class TestRelocationTools:
