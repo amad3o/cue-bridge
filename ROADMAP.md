@@ -204,4 +204,12 @@ Built and tested in code, but never checked in the real application. Most need t
 
 ## Suggested next step
 
-Confirm the cleanup in Rekordbox, then section 9: verify cue slots F to H, loops and colours in the database, and move or replace the two XML edit tools (or drop them). After that, the cue comparison (section 4), the housekeeping (known issue 1: pin the Python version, add CI and lint) and the metadata reports (section 8).
+Where we paused (2026-11-06): the library is fully in sync (Apple Music, Rekordbox and Serato), the 20 missing Rekordbox files are gone, and hot cues A to H with 17 colours are verified.
+
+1. **Loops.** On a test track (`Sex` or `Knockin (Original Mix)`), save a loop to a hot cue pad (and a memory loop), re-export the XML over `/Volumes/LaCie/Music/rekordbox-2026.xml`, then read how the database stores the loop end and add it to `db_library.py`. Loops are skipped and reported until then.
+2. **Other colours.** About 60 colours exist; only 17 are confirmed. Colour a test track's pads with the rest, export, and pair the indexes the same way.
+3. **`.aif` cues.** One playlisted track is skipped because the Serato writer doesn't handle AIFF.
+4. **Drop the XML for the playlist export.** `export_playlists_for_rekordbox` and the two XML edit tools still need a fresh export (a stale one caused a detour today). Move them to the database or drop them.
+5. Then the cue comparison (section 4), the housekeeping (known issue 1: pin the Python version, add CI and lint) and the metadata reports (section 8).
+
+Left alone on purpose: the Rekordbox-only playlist `Trial playlist - Cloud Library Sync`.
