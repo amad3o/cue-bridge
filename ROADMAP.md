@@ -19,7 +19,7 @@ The loop that was the goal now works end to end, with one remaining export:
 
 ## Completed
 
-**MCP server** (`cuebridge/mcp_server.py`, stdio, `mcp` 2.x; registered in Claude Code). 18 tools, all returning compact, paginated output. The tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
+**MCP server** (`cuebridge/mcp_server.py`, stdio, `mcp` 2.x; registered in Claude Code). 19 tools, all returning compact, paginated output. The tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
 
 | Area | Tools |
 |---|---|
@@ -29,7 +29,7 @@ The loop that was the goal now works end to end, with one remaining export:
 | Apple Music | `load_apple_music_library` (live from the Music app, or an exported XML), `get_playlist_tracks` |
 | Compare | `compare_libraries`, `list_library_differences`, `find_missing_files` |
 | Playlists | `export_playlists_for_rekordbox` (XML, for getting new tracks in), `sync_playlists_to_rekordbox`, `undo_rekordbox_playlist_sync` (database) |
-| Broken paths | `fix_moved_files_in_rekordbox`, `undo_rekordbox_file_fix` (database) |
+| Broken paths | `fix_moved_files_in_rekordbox`, `undo_rekordbox_file_fix` (database), `report_stale_duplicates` (read-only) |
 
 **Core (Python)**
 
@@ -158,7 +158,8 @@ Only worth building if the text summaries in chat turn out not to be enough. Poi
 - [x] **Get tracks and playlists into Rekordbox from Apple Music** (`export_playlists_for_rekordbox`): adds a folder of the playlists that differ (or those named) to the Rekordbox XML that its Imported Library points at, as text, with new tracks built from Apple Music's data and moved files pointed at their real paths, recorded as pending in a side file until Rekordbox is exported afresh. Importing the folder created the folder and playlist and brought the new track into the collection (its analysis data path was already set). Because import can't update a playlist, use it for new tracks, then the database sync for existing playlists.
 - [ ] Database sync extras: remove tracks that Apple Music no longer has from a playlist, create a missing playlist, and keep track order. Check a playlist with several additions, Rekordbox's cloud or library sync if used, and re-running after a Rekordbox update.
 - [x] **Relocate moved files** (`fix_moved_files_in_rekordbox`, `undo_rekordbox_file_fix`): changes only a track's path, file name and (if it was the same) import path in `master.db`, with the playlist sync's safeguards. Verified on the real database (one track, loads and plays).
-- [ ] **Stale duplicate rows** (56 on the real library): decide how to merge cues and playlist entries from a broken row into the good one, then remove the broken row.
+- [x] **Stale duplicate report** (`report_stale_duplicates`): on the real library, of 56 broken rows with a twin, 51 are safe to remove (no cue or playlist entry the twin lacks) and 5 need a merge first (Style, Exonym, Simple City, Sun Dog, Web Harvest: they hold 6 to 8 cues the twin lacks).
+- [ ] **Merge cues from a broken row into its twin, then remove the broken rows** (database writes: cues and row deletion; needs the same safeguards). Nothing removes a row yet.
 - [ ] Analysis files (`PIONEER/USBANLZ`) keep the old path inside them after a relocation; check Rekordbox doesn't mind.
 - [ ] **Fix tags in files** (title, artist, genre, BPM, key) from a reviewed list, journaled. Needs a careful ID3 write, bigger than the in-place cue overwrite.
 - [ ] **Serato crates from playlists** (optional: playing is from Apple Music playlists inside Serato).

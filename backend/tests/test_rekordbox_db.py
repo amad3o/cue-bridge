@@ -67,7 +67,8 @@ class FakeBackend:
             )
             for p in state["playlists"]
         )
-        return rd.DbSnapshot(contents, playlists)
+        cues = tuple(rd.DbCue(c[0], c[1], c[2]) for c in state.get("cues", []))
+        return rd.DbSnapshot(contents, playlists, cues)
 
     def open_for_write(self, db_path: Path):
         return FakeWriter(self, db_path)
@@ -621,6 +622,66 @@ class TestRelocation:
 
         with pytest.raises(rd.DatabaseError, match="not a file-location journal"):
             rd.undo_relocations(journal, env["backend"])
+
+
+class TestStaleDuplicates:
+    def pairs(self, env, files, cues=(), extra_playlists=()):
+        state = json.loads(env["db"].read_text())
+        state["cues"] = list(cues)
+        state["playlists"] += list(extra_playlists)
+        env["db"].write_text(json.dumps(state))
+        snap = snapshot(env)
+
+        return {p.broken.content_id: p for p in rd.describe_duplicates(rd.plan_relocations(snap, files["music"]), snap)}
+
+    def test_a_broken_row_with_nothing_the_good_row_lacks_is_safe_to_remove(self, env, files):
+        pairs = self.pairs(
+            env, files, cues=[("c2", 1, 5000), ("c3", 1, 5010)],
+            extra_playlists=[{"id": "p9", "name": "Set", "songs": [song(9, "c3")]}],
+        )
+
+        assert sorted(pairs) == ["c2", "c5"]
+        assert pairs["c2"].verdict == "safe_to_remove" and pairs["c2"].good.content_id == "c3"
+
+    def test_a_cue_only_the_broken_row_has_needs_a_merge(self, env, files):
+        pairs = self.pairs(env, files, cues=[("c2", 1, 5000), ("c2", 0, 9000), ("c3", 1, 5000)])
+
+        assert pairs["c2"].cues_only_on_broken == 1 and pairs["c2"].verdict == "needs_merge"
+        assert (pairs["c2"].broken.hot_cues, pairs["c2"].broken.memory_cues) == (1, 1)
+
+    def test_the_same_position_in_another_slot_is_not_the_same_cue(self, env, files):
+        pairs = self.pairs(env, files, cues=[("c2", 1, 5000), ("c3", 2, 5000)])
+
+        assert pairs["c2"].cues_only_on_broken == 1
+
+    def test_a_playlist_only_the_broken_row_is_in_needs_a_merge(self, env, files):
+        pairs = self.pairs(env, files)
+
+        # c2 sits in "Set" and c3 does not, so removing c2 would drop it from the playlist.
+        assert pairs["c2"].playlists_only_on_broken == ("Set",)
+        assert pairs["c2"].verdict == "needs_merge"
+
+    def test_a_playlist_both_rows_are_in_is_fine(self, env, files):
+        pairs = self.pairs(env, files, extra_playlists=[{"id": "p9", "name": "Set", "songs": [song(9, "c3")]}])
+
+        assert pairs["c2"].playlists_only_on_broken == ()
+
+    def test_the_tool_reports_without_changing_anything(self, env, files, tmp_path, monkeypatch):
+        apple_music_service.clear_cache()
+        server.reset_state()
+        monkeypatch.setattr(rd, "default_backend", lambda: env["backend"])
+        monkeypatch.setattr(rd, "find_database", lambda: env["db"])
+        server.load_apple_music_library(str(write_library(tmp_path / "Lib.xml", [
+            music_track(2, "Twice", "X", files["real"]["1-02 Twice.mp3"]),
+        ], [playlist("Set", 2)])))
+        before = env["db"].read_bytes()
+
+        result = server.report_stale_duplicates()
+
+        server.reset_state()
+        assert result["pairs"] == 1 and result["details"][0]["track"] == "Twice"
+        assert result["details"][0]["goodRow"]["id"] == "c3"
+        assert env["db"].read_bytes() == before
 
 
 class TestRelocationTools:

@@ -85,9 +85,17 @@ class DbPlaylist:
 
 
 @dataclass(frozen=True)
+class DbCue:
+    content_id: str
+    kind: int  # 0 is a memory cue, 1 and up are hot cues (1 is A)
+    position_ms: int
+
+
+@dataclass(frozen=True)
 class DbSnapshot:
     contents: tuple[DbContent, ...]
     playlists: tuple[DbPlaylist, ...]
+    cues: tuple[DbCue, ...] = ()
 
     def playlist_contents(self) -> dict[str, tuple[str, ...]]:
         return {p.id: p.content_ids for p in self.playlists}
@@ -203,7 +211,11 @@ class PyrekordboxBackend:
                     song_ids=tuple(str(s.ID) for s in songs), content_ids=tuple(str(s.ContentID) for s in songs),
                 ))
 
-            return DbSnapshot(contents, tuple(playlists))
+            cues = tuple(
+                DbCue(str(c.ContentID), int(c.Kind or 0), int(c.InMsec or 0)) for c in db.get_cue().all()
+            )
+
+            return DbSnapshot(contents, tuple(playlists), cues)
         finally:
             db.close()
 
@@ -607,6 +619,7 @@ class RelocationPlan:
     relocations: list[Relocation] = field(default_factory=list)
     no_match: list[tuple[str, str]] = field(default_factory=list)  # (title, path) with no file found in Apple Music
     already_in_collection: list[tuple[str, str]] = field(default_factory=list)  # (title, new path) another row has
+    duplicates: list[tuple[str, str]] = field(default_factory=list)  # (broken row ID, the row that has the real file)
 
 
 def plan_relocations(
@@ -620,7 +633,7 @@ def plan_relocations(
     ]
     missing = library_reports.find_missing_rekordbox_files(tracks, music, only_with_cues=False, exists=exists)
     # The drive ignores case and Unicode form, so two spellings of one path are the same file.
-    in_use = {normalize_path(c.path) for c in snapshot.contents if c.path}
+    in_use = {normalize_path(c.path): c.id for c in snapshot.contents if c.path}
     plan = RelocationPlan()
     claimed: set[str] = set()
 
@@ -637,6 +650,10 @@ def plan_relocations(
 
         if key in in_use or key in claimed:
             plan.already_in_collection.append((label[0], new_path))
+
+            if key in in_use:
+                plan.duplicates.append((content.id, in_use[key]))
+
             continue
 
         claimed.add(key)
@@ -719,6 +736,7 @@ def apply_relocations(plan: RelocationPlan, db_path: Path, music: MusicLibrary, 
     expected = DbSnapshot(
         tuple(_apply_relocation(c, by_id[c.id]) if c.id in by_id else c for c in before.contents),
         before.playlists,
+        before.cues,
     )
 
     try:
@@ -788,3 +806,76 @@ def undo_relocations(journal_path: Path, backend: Backend, dry_run: bool = False
     _save_journal(Path(journal_path), journal)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Stale duplicate rows
+# ---------------------------------------------------------------------------
+
+CUE_TOLERANCE_MS = 25
+
+
+@dataclass(frozen=True)
+class RowSummary:
+    content_id: str
+    path: str | None
+    hot_cues: int
+    memory_cues: int
+    playlists: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DuplicatePair:
+    title: str | None
+    artist: str | None
+    broken: RowSummary
+    good: RowSummary
+    cues_only_on_broken: int
+    playlists_only_on_broken: tuple[str, ...]
+
+    @property
+    def verdict(self) -> str:
+        """"safe_to_remove" if the broken row holds nothing the good one lacks, otherwise "needs_merge"."""
+        if self.cues_only_on_broken or self.playlists_only_on_broken:
+            return "needs_merge"
+
+        return "safe_to_remove"
+
+
+def describe_duplicates(plan: RelocationPlan, snapshot: DbSnapshot) -> list[DuplicatePair]:
+    """For each broken row that has a twin holding the real file: what each row has (cues, playlists)."""
+    contents = {c.id: c for c in snapshot.contents}
+    cues: dict[str, list[DbCue]] = {}
+    playlists: dict[str, list[str]] = {}
+
+    for cue in snapshot.cues:
+        cues.setdefault(cue.content_id, []).append(cue)
+
+    for playlist in snapshot.playlists:
+        if playlist.is_plain:
+            for content_id in set(playlist.content_ids):
+                playlists.setdefault(content_id, []).append("/".join((*playlist.folders, playlist.name)))
+
+    def summary(content_id: str) -> RowSummary:
+        own = cues.get(content_id, [])
+
+        return RowSummary(
+            content_id, contents[content_id].path,
+            sum(1 for c in own if c.kind > 0), sum(1 for c in own if c.kind == 0),
+            tuple(sorted(playlists.get(content_id, []))),
+        )
+
+    def covered(cue: DbCue, others: list[DbCue]) -> bool:
+        return any(o.kind == cue.kind and abs(o.position_ms - cue.position_ms) <= CUE_TOLERANCE_MS for o in others)
+
+    pairs = []
+
+    for broken_id, good_id in plan.duplicates:
+        broken, good = summary(broken_id), summary(good_id)
+        missing = sum(1 for c in cues.get(broken_id, []) if not covered(c, cues.get(good_id, [])))
+        pairs.append(DuplicatePair(
+            contents[broken_id].title, contents[broken_id].artist, broken, good, missing,
+            tuple(p for p in broken.playlists if p not in good.playlists),
+        ))
+
+    return pairs

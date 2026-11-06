@@ -717,6 +717,44 @@ def undo_rekordbox_file_fix(journal: str | None = None, dry_run: bool = True) ->
 
 @mcp.tool(annotations=READ_ONLY)
 @_translate_errors
+def report_stale_duplicates(database_path: str | None = None, limit: int = 25) -> dict:
+    """List Rekordbox tracks whose file is missing but whose real file Rekordbox already has under another row.
+
+    Read-only. These are duplicates left behind when files were renamed. For
+    each pair it shows what the broken row and the good row have: hot and memory
+    cues, and which playlists they are in. "safe_to_remove" means the broken row
+    has no cue and no playlist entry that the good row lacks; "needs_merge"
+    means it does, so removing it would lose something. Nothing is changed and
+    this tool cannot remove anything. Needs the Apple Music library loaded.
+    """
+    music = _require_apple_library()
+    snapshot = rekordbox_db.read_snapshot(_db_target(database_path), rekordbox_db.default_backend())
+    pairs = rekordbox_db.describe_duplicates(rekordbox_db.plan_relocations(snapshot, music), snapshot)
+    pairs.sort(key=lambda p: (p.verdict, p.title or ""))
+
+    def row(r) -> dict:
+        return {"id": r.content_id, "hotCues": r.hot_cues, "memoryCues": r.memory_cues, "playlists": list(r.playlists)}
+
+    return {
+        "pairs": len(pairs),
+        "safeToRemove": sum(1 for p in pairs if p.verdict == "safe_to_remove"),
+        "needsMerge": sum(1 for p in pairs if p.verdict == "needs_merge"),
+        "details": [
+            {
+                "track": p.title, "artist": p.artist, "verdict": p.verdict,
+                "brokenRow": {**row(p.broken), "missingPath": p.broken.path},
+                "goodRow": row(p.good),
+                "cuesOnlyOnBrokenRow": p.cues_only_on_broken,
+                "playlistsOnlyOnBrokenRow": list(p.playlists_only_on_broken),
+            }
+            for p in pairs[: max(1, min(limit, 100))]
+        ],
+        "hasMore": len(pairs) > limit,
+    }
+
+
+@mcp.tool(annotations=READ_ONLY)
+@_translate_errors
 def search_tracks(
     query: str = "",
     has_cues: bool | None = None,
