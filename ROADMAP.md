@@ -13,7 +13,7 @@ The parsing, matching and conversion logic stays in plain Python. The MCP server
 The loop that was the goal now works end to end, with one remaining export:
 
 1. Tracks and playlists are managed in **Apple Music**, which CueBridge reads **live** (no export).
-2. Cues are set in **Rekordbox**. CueBridge reads its **XML export** for cues (the one remaining manual export, see section 9).
+2. Cues are set in **Rekordbox**. CueBridge reads them from its **live database** (no export; the XML export is a fallback).
 3. `sync_cues_to_serato` copies Rekordbox's cues into the **Serato** tags of the audio files (both cue frames, with timing correction).
 4. `sync_playlists_to_rekordbox` adds new tracks to **existing Rekordbox playlists** by editing Rekordbox's database (Rekordbox closed, backup, verification, undo). A brand-new track must first be imported into the Rekordbox collection (the XML route, section 8).
 
@@ -53,7 +53,7 @@ The loop that was the goal now works end to end, with one remaining export:
 1. **Housekeeping.** `requirements.txt` doesn't pin a Python version. There is no CI or lint.
 2. ~~The two Rekordbox XML edit tools re-serialised the XML.~~ Fixed: they now insert the new cue lines as text and keep every other byte (no marker comment). Every in-place edit now makes a backup, and a copy is never saved over an existing file. Rekordbox accepting an edited export is still unverified (see "Not yet verified").
 3. **Rekordbox tracks pointing at renamed files.** The live database has 77 missing files (7,220 tracks). Read through the live Apple Music library: only 1 can be repointed (`fix_moved_files_in_rekordbox` did that, Floor (Rowka Remix), and it plays in Rekordbox; a first run repointed 5, but 4 turned out to be duplicates that differed only in case or accents, which the check now catches and the run was undone); 56 already have a second Rekordbox row for the real file (stale duplicates, which may hold cues or playlist entries, so they need a decision, not a repoint); 20 have no matching file in Apple Music.
-4. **A Rekordbox export is still needed for cues and for the comparison with Rekordbox's collection** (section 9).
+4. ~~A Rekordbox export is needed for cues.~~ Fixed: cues, beat grids and track lengths are read from the live database (`db_library.py`), checked against an XML export on the real library (45 of 46 tracks identical, colours included; the rest were stale rows and one cue moved after the export). Only cue slots A to E and colour index 41 are verified; any other slot or colour is left out and reported.
 5. **Rekordbox can only create a playlist from an XML import, never update one.** That is why updating an existing playlist goes through the database. An XML import of `r&b` made a second `r&b` in a new "Apple Music" folder.
 6. **UI bugs to fix if the UI is revived (section 7).** The arrow-key listener is global (it fires while typing in the search box), row keys aren't stable, sort direction never flips, selection isn't reset when the filter changes, and the API URL is hardcoded to `localhost:8000`.
 
@@ -171,7 +171,9 @@ Only worth building if the text summaries in chat turn out not to be enough. Poi
 
 The database reader already sees every track and playlist in the live collection. Reading **cues** (and beat grids, for the timing estimate) from it too would let the cue sync, the comparison and the playlist tools all run with no export, so the loop needs no manual step.
 
-- [ ] Read tracks, cues (hot, memory, loop, colors) and the first beat from `master.db` into the existing `Track` / `Cue` models, through a copy, as the playlist reader does.
+- [x] Read tracks, cues and the first beat from `master.db` into `Track` / `Cue` (`db_library.py`); `sync_cues_to_serato` and `check_sync_status` use it, with the XML as a fallback (`cue_source`).
+- [ ] Verify the database's numbering for hot cues F to H (kinds 7 and up; kind 4 is not a hot cue) and for loops, and the colour index table (only 41 is known). Cues in those slots are left out and reported until then.
+- [ ] Still XML-only: `set_default_cue`, `duplicate_memory_cues_to_hot_cues`, and the XML playlist export.
 - [ ] Let `load_rekordbox_library` take the database as a source (`path` omitted), keeping the XML as an option.
 - [ ] Decide what replaces `set_default_cue` and `duplicate_memory_cues_to_hot_cues`: database writes with the same safeguards, or text-patched XML (known issue 2). Rekordbox must be closed for database writes.
 - [ ] Rekordbox's own "auto export collection" setting was found disabled (`CollectionAutoExportEnable`, path `~/Dropbox/rekordbox/xml`) and was enabled by the user; check whether it writes an XML by itself, which would be a simpler route.
@@ -196,4 +198,4 @@ Built and tested in code, but never checked in the real application. Most need t
 
 ## Suggested next step
 
-Section 9: read cues from Rekordbox's database so nothing has to be exported, then move or replace the two XML edit tools. After that, the cue comparison (section 4) and the duplicates and metadata reports (section 8).
+Section 9: verify cue slots F to H, loops and colours in the database, then move or replace the two XML edit tools. After that, the cue comparison (section 4) and the duplicates and metadata reports (section 8).

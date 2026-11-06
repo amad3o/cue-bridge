@@ -104,10 +104,21 @@ class TestReport:
         assert attention(report)[("cues", "tracks whose Serato cues differ from Rekordbox's")]["fix"] == "sync_cues_to_serato"
 
     def test_an_export_older_than_the_database_is_a_warning(self, tmp_path):
-        report = sync_check.build_report(inputs(tmp_path, database_modified=datetime(2026, 1, 2, 18)))
+        report = sync_check.build_report(inputs(tmp_path, cues_from_xml=True, database_modified=datetime(2026, 1, 2, 18)))
 
         assert "30 hours" in report["cues"]["warning"]
         assert ("cues", "the Rekordbox XML export is older than the database") in attention(report)
+
+    def test_cues_from_the_database_never_warn_about_the_export(self, tmp_path):
+        report = sync_check.build_report(inputs(tmp_path, cues_from_xml=False, database_modified=datetime(2026, 1, 2, 18)))
+
+        assert "warning" not in report["cues"]
+
+    def test_notes_about_cues_that_could_not_be_read_need_attention(self, tmp_path):
+        report = sync_check.build_report(inputs(tmp_path, cue_notes=["2 cues in unusual slots were left out"]))
+
+        assert report["cues"]["notes"] == ["2 cues in unusual slots were left out"]
+        assert ("cues", "notes about cues CueBridge couldn't fully read") in attention(report)
 
     def test_a_small_gap_is_not_a_warning(self, tmp_path):
         stamp = datetime(2026, 1, 1, 12)

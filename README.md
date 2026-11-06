@@ -14,7 +14,7 @@ Early development, used on one real library. What works today:
 - **Playlists into Rekordbox.** Adds new tracks to your existing Rekordbox playlists by editing Rekordbox's database (Rekordbox closed; backup, verification and undo), and prepares new tracks and playlists for Rekordbox's XML import.
 - **Rekordbox XML.** Reads a Rekordbox export (tracks, cues, playlists), and has two editing tools for it (see the warning under their safety section).
 
-Not built yet: reading cues from Rekordbox's database (so no export is needed), comparing cues between the programs, metadata and playlist-hygiene reports, and M4A/AIFF cue support. See [ROADMAP.md](ROADMAP.md) for completed work, known issues and what's next.
+Not built yet: reading memory/hot-cue slots F to H and loops from Rekordbox's database (only cues A to E are verified), comparing cues between the programs, metadata and playlist-hygiene reports, and M4A/AIFF cue support. See [ROADMAP.md](ROADMAP.md) for completed work, known issues and what's next.
 
 ## Setup
 
@@ -30,7 +30,7 @@ pytest                      # optional: run the tests
 
 ### Export your Rekordbox library
 
-In Rekordbox, choose **File → Export Collection in xml format** and save the file somewhere you can find it. CueBridge reads that XML file. Only that export contains cue points. An iTunes `Library.xml` won't work.
+In Rekordbox, choose **File → Export Collection in xml format** and save the file somewhere you can find it. CueBridge can read that XML file, but it is no longer needed for the cue sync or the sync check: those read Rekordbox's live database (cues, beat grids and all). The export is a fallback, and what the two XML editing tools work on. An iTunes `Library.xml` won't work.
 
 ### Register the server with Claude Code
 
@@ -71,7 +71,7 @@ Start a new session (or run `/mcp`) and `cuebridge` should show as connected. Th
 | `set_default_cue(output_path, dry_run=True)` | Adds a hot cue A at 0:00 to every track with no cue or loop, in the loaded XML file (a backup is saved first). |
 | `duplicate_memory_cues_to_hot_cues(output_path, dry_run=True)` | Copies every memory cue to a hot cue at the same position, in the lowest free slots (A-H), in the loaded XML file. Memory cues are kept. A memory cue that already has a hot cue at the same time is skipped, so running it twice changes nothing. Cues beyond 8 are reported and not copied. |
 
-| `sync_cues_to_serato(dry_run=True, expected_files, track_ids, include_memory_cues=True, use_apple_music_paths=True)` | **Edits your audio files.** Copies the loaded Rekordbox library's hot cues (and memory cues, in free slots) into each file's Serato cue tag. Rekordbox wins. If an Apple Music library is loaded, a file that moved is found there. |
+| `sync_cues_to_serato(dry_run=True, expected_files, track_ids, include_memory_cues=True, use_apple_music_paths=True, cue_source="auto")` | **Edits your audio files.** Copies Rekordbox's hot cues (and memory cues, in free slots) into each file's Serato cue tag. Rekordbox wins. Reads the cues from Rekordbox's live database (`cue_source="auto"`; `"xml"` uses the loaded export instead). If an Apple Music library is loaded, a file that moved is found there. |
 | `undo_serato_sync(journal, dry_run=True)` | Puts back the original cue bytes recorded by a sync. |
 
 Results are paged (at most 100 per call) so large libraries don't flood the assistant's context.

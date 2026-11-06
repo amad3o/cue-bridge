@@ -7,6 +7,7 @@ currently loaded library and translate errors for the assistant.
 """
 
 import functools
+from dataclasses import dataclass
 from datetime import datetime
 from collections import Counter
 from pathlib import Path
@@ -15,7 +16,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cuebridge.services import drift, library_queries, library_reports, playlist_export, rekordbox_db, rekordbox_editor, serato_sync, sync_check
+from cuebridge.services import drift, library_queries, library_reports, playlist_export, rekordbox_db, rekordbox_editor, serato_sync, sync_check, db_library
 from cuebridge.parsers.apple_music_xml import MusicLibrary
 from cuebridge.services import apple_music_live
 from cuebridge.services import rekordbox_service
@@ -986,15 +987,16 @@ def check_sync_status(
       may stay open.
     - files: Rekordbox tracks whose file is missing, whether the real file can be
       found, and stale duplicate rows.
-    - cues, Rekordbox against Serato: what sync_cues_to_serato would change. The
-      Rekordbox cues come from the XML export (the only place CueBridge reads
-      them), so the report warns when the database is newer than the export.
-      Serato's side is read from the cue tags in the audio files.
+    - cues, Rekordbox against Serato: what sync_cues_to_serato would change.
+      Rekordbox's cues are read from its live database, so no XML export is
+      needed (a loaded XML is only a fallback, and the report warns when it is
+      older than the database). Serato's side is read from the cue tags in the
+      audio files.
 
     Apple Music is read live (the Music app must be open, and it takes about half
     a minute) unless a library is already loaded; pass reload_apple_music=true to
-    read it again. `rekordbox_xml` is the export to read cues from (or use the one
-    already loaded with load_rekordbox_library). Each part that can't be checked is
+    read it again. `rekordbox_xml` is optional: an export to fall back on if the
+    database can't be read. Each part that can't be checked is
     reported as such instead of failing the whole report. Show the user the
     summary and what needs attention; do not run any fix without asking.
     """
@@ -1025,11 +1027,13 @@ def check_sync_status(
         inputs.xml_tracks, inputs.xml_playlists, inputs.xml_path = library.tracks, library.playlists, library.path
         inputs.xml_modified = datetime.fromtimestamp(library.path.stat().st_mtime)
 
-        try:
-            moved = library_reports.moved_file_paths(library_reports.find_missing_rekordbox_files(library.tracks, music))
-            inputs.serato_plan = serato_sync.build_sync_plan(library.tracks, moved_files=moved)
-        except Exception as error:
-            inputs.serato_error = str(error)
+    try:
+        cues = _cue_source("auto", database_path)
+        moved = library_reports.moved_file_paths(library_reports.find_missing_rekordbox_files(cues.tracks, music))
+        inputs.serato_plan = serato_sync.build_sync_plan(cues.tracks, moved_files=moved)
+        inputs.cues_from, inputs.cues_from_xml, inputs.cue_notes = cues.label, cues.from_xml, cues.notes
+    except Exception as error:
+        inputs.serato_error = str(error)
 
     return sync_check.build_report(inputs)
 
@@ -1227,6 +1231,67 @@ def duplicate_memory_cues_to_hot_cues(output_path: str | None = None, dry_run: b
     )
 
 
+@dataclass
+class CueSource:
+    tracks: list
+    by_id: dict
+    label: str
+    notes: list[str]
+    from_xml: bool
+
+
+def _cue_source(choice: str = "auto", database_path: str | None = None) -> CueSource:
+    """Where to read Rekordbox's cues from: its database (always current) or the loaded XML export."""
+    if choice not in ("auto", "database", "xml"):
+        raise ToolError("cue_source must be 'auto', 'database' or 'xml'.")
+
+    failure = None
+
+    if choice in ("auto", "database"):
+        try:
+            snapshot = rekordbox_db.read_snapshot(_db_target(database_path), rekordbox_db.default_backend())
+            library = db_library.tracks_from_snapshot(snapshot)
+            notes = []
+
+            if library.unverified_cues:
+                notes.append(
+                    f"{len(library.unverified_cues)} cue(s) in unusual slots (kind 4, or F to H) were left out because "
+                    "CueBridge doesn't know how the database numbers them; use cue_source='xml' to include them: "
+                    + ", ".join(sorted({t for t, _ in library.unverified_cues})[:5])
+                )
+
+            if library.unknown_colors:
+                notes.append(
+                    f"{len(library.unknown_colors)} cue colour(s) have an index CueBridge can't convert, so those cues "
+                    "have no colour: " + ", ".join(sorted({t for t, _ in library.unknown_colors})[:5])
+                )
+
+            if library.beat_grids_missing:
+                notes.append(f"{library.beat_grids_missing} track(s) with cues have no readable beat grid.")
+
+            return CueSource(library.tracks, library.tracks_by_id, "Rekordbox's database (live)", notes, False)
+        except Exception as error:
+            if choice == "database":
+                raise ToolError(f"Could not read Rekordbox's database: {error}") from None
+
+            failure = str(error)
+
+    if _current_path is None:
+        raise ToolError(
+            "Rekordbox's cues need either its database"
+            + (f" (not readable: {failure})" if failure else "")
+            + " or a loaded XML export: call load_rekordbox_library first."
+        )
+
+    xml = get_rekordbox_library(_current_path)
+    notes = [f"Read from the XML export {xml.path.name}, which may be out of date."]
+
+    if failure:
+        notes.append(f"The database couldn't be read: {failure}")
+
+    return CueSource(xml.tracks, xml.tracks_by_id, f"the Rekordbox XML export ({xml.path})", notes, True)
+
+
 @mcp.tool(
     annotations=ToolAnnotations(
         readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
@@ -1239,8 +1304,13 @@ def sync_cues_to_serato(
     track_ids: list[str] | None = None,
     include_memory_cues: bool = True,
     use_apple_music_paths: bool = True,
+    cue_source: str = "auto",
 ) -> dict:
-    """Copy the loaded Rekordbox library's cues into the Serato tags of the audio files.
+    """Copy Rekordbox's cues into the Serato tags of the audio files.
+
+    The cues are read from Rekordbox's live database when it can be read (no XML
+    export needed, and always current), otherwise from the loaded XML export.
+    `cue_source` forces one: "database" or "xml" ("auto" is the default).
 
     Rekordbox wins: for every track that has cues in Rekordbox, the hot cues in
     the file's Serato tag are replaced by the Rekordbox hot cues (same slots),
@@ -1267,7 +1337,7 @@ def sync_cues_to_serato(
     whose file is missing at the Rekordbox path is synced at the path Apple
     Music has for it (see find_missing_files).
     """
-    library = _require_library()
+    library = _cue_source(cue_source)
     music = _apple_library() if use_apple_music_paths else None
     moved = (
         library_reports.moved_file_paths(library_reports.find_missing_rekordbox_files(library.tracks, music))
@@ -1283,6 +1353,8 @@ def sync_cues_to_serato(
 
     result = {
         "dryRun": dry_run,
+        "cuesFrom": library.label,
+        "cueNotes": library.notes,
         "filesToChange": len(changes),
         "filesAlreadyUpToDate": len(plan.with_status("unchanged")),
         "filesSkipped": len(plan.with_status("skip")),

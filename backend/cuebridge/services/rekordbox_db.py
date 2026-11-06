@@ -45,6 +45,7 @@ from cuebridge.services.track_matcher import normalize_path
 
 DB_FILES = ("master.db", "master.db-wal", "master.db-shm", "masterPlaylists6.xml")
 SETTINGS_FILE = Path("~/Library/Application Support/Pioneer/rekordbox6/rekordbox3.settings")
+HOME_DATABASE = Path("~/Library/Pioneer/rekordbox/master.db")  # where Rekordbox keeps it unless told otherwise
 JOURNAL_VERSION = 1
 
 
@@ -66,6 +67,7 @@ class DbContent:
     duration_ms: int | None
     file_name: str | None = None
     org_path: str | None = None  # where the file was when it was first imported
+    analysis_path: str | None = None  # the track's analysis file, relative to Rekordbox's share folder
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,9 @@ class DbCue:
     kind: int  # 0 is a memory cue, 1 and up are hot cues (1 is A)
     position_ms: int
     id: str = ""
+    out_ms: int | None = None  # the end of a loop; None for a plain cue
+    color_index: int | None = None  # a hot cue's colour, as an index into Rekordbox's colour table (0 or None: default)
+    comment: str | None = None
 
 
 @dataclass(frozen=True)
@@ -316,6 +321,7 @@ class PyrekordboxBackend:
                     id=str(c.ID), title=c.Title, artist=artists.get(str(c.ArtistID)), path=c.FolderPath or None,
                     duration_ms=int(c.Length) * 1000 if c.Length else None,
                     file_name=c.FileNameL or None, org_path=c.OrgFolderPath or None,
+                    analysis_path=c.AnalysisDataPath or None,
                 )
                 for c in db.get_content().all()
             )
@@ -339,7 +345,11 @@ class PyrekordboxBackend:
                 ))
 
             cues = tuple(
-                DbCue(str(c.ContentID), int(c.Kind or 0), int(c.InMsec or 0), str(c.ID)) for c in db.get_cue().all()
+                DbCue(
+                    str(c.ContentID), int(c.Kind or 0), int(c.InMsec or 0), str(c.ID),
+                    int(c.OutMsec) if c.OutMsec is not None and int(c.OutMsec) > 0 else None,
+                    int(c.ColorTableIndex) if c.ColorTableIndex else None, c.Comment or None,
+                ) for c in db.get_cue().all()
             )
 
             return DbSnapshot(contents, tuple(playlists), cues)
@@ -368,7 +378,7 @@ def find_database() -> Path:
 
     found = re.search(r'name="masterDbDirectory" val="([^"]+)"', text)
     candidates = [Path(found.group(1)) / "master.db"] if found else []
-    candidates.append(Path("~/Library/Pioneer/rekordbox/master.db").expanduser())
+    candidates.append(HOME_DATABASE.expanduser())
 
     for candidate in candidates:
         if candidate.is_file():
@@ -800,7 +810,7 @@ def plan_relocations(
 def _apply_relocation(content: DbContent, relocation: Relocation) -> DbContent:
     return DbContent(
         content.id, content.title, content.artist, relocation.new_path, content.duration_ms,
-        relocation.new_file_name, relocation.new_org_path,
+        relocation.new_file_name, relocation.new_org_path, content.analysis_path,
     )
 
 

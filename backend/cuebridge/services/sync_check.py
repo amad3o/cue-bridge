@@ -8,8 +8,8 @@ failing. Nothing is ever changed.
     database is the truth when it can be read (the XML export can be days old);
     otherwise the XML export is used and the report says so.
   * Files: Rekordbox tracks whose audio file is missing, and what could be done.
-  * Cues, Rekordbox against Serato. Cues come from the Rekordbox XML export, the
-    only place CueBridge reads them from, so a stale export gives stale answers;
+  * Cues, Rekordbox against Serato. Rekordbox's cues come from its live database
+    (the XML export is only a fallback, and a stale one gives stale answers);
     Serato's side is read from the cue tags in the audio files.
 """
 
@@ -39,6 +39,9 @@ class Inputs:
     database_modified: datetime | None = None
     serato_plan: object | None = None  # a serato_sync plan
     serato_error: str | None = None
+    cues_from: str | None = None  # where Rekordbox's cues were read from
+    cues_from_xml: bool = False
+    cue_notes: list[str] = field(default_factory=list)
 
 
 def _attention(items: list[dict], area: str, what: str, count: int, fix: str) -> None:
@@ -120,12 +123,13 @@ def _files_section(inputs: Inputs, attention: list[dict]) -> dict:
 
 def _cues_section(inputs: Inputs, attention: list[dict]) -> dict:
     if inputs.serato_plan is None:
-        return {"couldNotCheck": inputs.serato_error or "no Rekordbox XML export is loaded (cues are read from it)"}
+        return {"couldNotCheck": inputs.serato_error or "Rekordbox's cues couldn't be read (no database, and no XML export is loaded)"}
 
     plan = inputs.serato_plan
     changes = plan.to_change
     section = {
-        "cuesComeFrom": str(inputs.xml_path) if inputs.xml_path else "the loaded Rekordbox XML",
+        "cuesComeFrom": inputs.cues_from or "the loaded Rekordbox XML",
+        "notes": inputs.cue_notes,
         "tracksChecked": len(plan.items),
         "differ": len(changes),
         "inSync": len(plan.with_status("unchanged")),
@@ -141,7 +145,7 @@ def _cues_section(inputs: Inputs, attention: list[dict]) -> dict:
         ],
     }
 
-    if inputs.xml_modified and inputs.database_modified and inputs.database_modified - inputs.xml_modified > STALE_AFTER:
+    if inputs.cues_from_xml and inputs.xml_modified and inputs.database_modified and inputs.database_modified - inputs.xml_modified > STALE_AFTER:
         age = inputs.database_modified - inputs.xml_modified
         section["warning"] = (
             f"The Rekordbox database was changed {_ago(age)} after the XML export these cues come from, "
@@ -151,6 +155,8 @@ def _cues_section(inputs: Inputs, attention: list[dict]) -> dict:
                           "fix": "export the collection from Rekordbox again (File > Export Collection in xml format)"})
 
     _attention(attention, "cues", "tracks whose Serato cues differ from Rekordbox's", len(changes), "sync_cues_to_serato")
+    _attention(attention, "cues", "notes about cues CueBridge couldn't fully read", len(inputs.cue_notes) if not inputs.cues_from_xml else 0,
+               "see the notes under cues")
 
     return section
 
