@@ -105,6 +105,8 @@ class Writer(Protocol):
     def add(self, playlist_id: str, content_id: str) -> str: ...
     def remove(self, playlist_id: str, song_id: str) -> None: ...
     def relocate(self, content_id: str, path: str, file_name: str | None, org_path: str | None) -> None: ...
+    def create_playlist(self, name: str) -> str: ...
+    def delete_playlist(self, playlist_id: str) -> None: ...
     def commit(self) -> None: ...
     def rollback(self) -> None: ...
     def close(self) -> None: ...
@@ -145,6 +147,12 @@ class PyrekordboxWriter:
 
     def remove(self, playlist_id: str, song_id: str) -> None:
         self._db.remove_from_playlist(playlist_id, song_id)
+
+    def create_playlist(self, name: str) -> str:
+        return str(self._db.create_playlist(name).ID)
+
+    def delete_playlist(self, playlist_id: str) -> None:
+        self._db.delete_playlist(playlist_id)
 
     def relocate(self, content_id: str, path: str, file_name: str | None, org_path: str | None) -> None:
         content = self._db.get_content(ID=content_id)
@@ -412,6 +420,7 @@ def _save_journal(path: Path, journal: dict) -> None:
 
 PLAYLIST_JOURNALS = "rekordbox-playlists"
 PATH_JOURNALS = "rekordbox-paths"
+REVIEW_JOURNALS = "rekordbox-review"
 
 
 def _journal_path(directory: Path, prefix: str = PLAYLIST_JOURNALS) -> Path:
@@ -879,3 +888,170 @@ def describe_duplicates(plan: RelocationPlan, snapshot: DbSnapshot) -> list[Dupl
         ))
 
     return pairs
+
+
+# ---------------------------------------------------------------------------
+# Review playlists: let Rekordbox remove the stale rows itself
+# ---------------------------------------------------------------------------
+
+SAFE_PLAYLIST = "CueBridge: remove (safe)"
+MERGE_PLAYLIST = "CueBridge: check cues first"
+
+
+@dataclass
+class ReviewPlan:
+    safe: list[tuple[str, str | None, str | None]] = field(default_factory=list)  # (content ID, title, artist)
+    merge: list[tuple[str, str | None, str | None]] = field(default_factory=list)
+
+
+def plan_review_playlists(snapshot: DbSnapshot, music: MusicLibrary, exists=os.path.exists) -> ReviewPlan:
+    """The broken rows that have a twin, split by whether removing them loses anything."""
+    taken = {p.name for p in snapshot.playlists} & {SAFE_PLAYLIST, MERGE_PLAYLIST}
+
+    if taken:
+        raise DatabaseError(
+            f"Rekordbox already has a playlist called {sorted(taken)[0]!r}. Remove it (or run "
+            "undo_rekordbox_review_playlists) before making new review playlists."
+        )
+
+    pairs = describe_duplicates(plan_relocations(snapshot, music, exists), snapshot)
+    plan = ReviewPlan()
+
+    for pair in sorted(pairs, key=lambda p: (p.title or "").casefold()):
+        row = (pair.broken.content_id, pair.title, pair.artist)
+        (plan.safe if pair.verdict == "safe_to_remove" else plan.merge).append(row)
+
+    return plan
+
+
+def _review_key(plan: ReviewPlan) -> tuple:
+    return (tuple(r[0] for r in plan.safe), tuple(r[0] for r in plan.merge))
+
+
+def apply_review_playlists(plan: ReviewPlan, db_path: Path, music: MusicLibrary, backend: Backend, exists=os.path.exists) -> ApplyResult:
+    """Create the two review playlists, with backup, journal and verification."""
+    _require_rekordbox_closed()
+
+    if not plan.safe and not plan.merge:
+        raise DatabaseError("Nothing to review.")
+
+    before = read_snapshot(db_path, backend)
+
+    if _review_key(plan_review_playlists(before, music, exists)) != _review_key(plan):
+        raise DatabaseError("Rekordbox's database or the files changed since this was planned. Nothing was written. Run a dry run again.")
+
+    wanted = [(name, rows) for name, rows in ((SAFE_PLAYLIST, plan.safe), (MERGE_PLAYLIST, plan.merge)) if rows]
+    backup = _backup_database(db_path, backend, before)
+    journal_path = _journal_path(cuebridge_home() / "undo", REVIEW_JOURNALS)
+    journal = {
+        "version": JOURNAL_VERSION, "kind": "review", "createdAt": datetime.now().isoformat(timespec="seconds"),
+        "database": str(db_path), "backup": str(backup), "state": "pending",
+        "playlists": [{"name": name, "playlistId": None, "contentIds": [r[0] for r in rows]} for name, rows in wanted],
+    }
+    _save_journal(journal_path, journal)
+
+    writer = backend.open_for_write(db_path)
+
+    try:
+        for entry in journal["playlists"]:
+            entry["playlistId"] = writer.create_playlist(entry["name"])
+
+            for content_id in entry["contentIds"]:
+                writer.add(entry["playlistId"], content_id)
+
+        journal["state"] = "writing"
+        _save_journal(journal_path, journal)
+        writer.commit()
+    except Exception as error:
+        try:
+            writer.rollback()
+        except Exception:
+            pass
+        writer.close()
+        _restore(backup, db_path)
+        journal["state"] = "failed"
+        _save_journal(journal_path, journal)
+        raise DatabaseError(f"Writing to the database failed and the backup was put back: {error}") from None
+
+    writer.close()
+    journal["state"] = "written"
+    _save_journal(journal_path, journal)
+
+    try:
+        after = read_snapshot(db_path, backend)
+        old_ids = {p.id for p in before.playlists}
+        old = [p for p in after.playlists if p.id in old_ids]
+        new = {p.name: p.content_ids for p in after.playlists if p.id not in old_ids}
+        problems = []
+
+        if old != list(before.playlists) or after.contents != before.contents or after.cues != before.cues:
+            problems.append("something other than the new playlists changed")
+
+        if new != {name: tuple(r[0] for r in rows) for name, rows in wanted}:
+            problems.append("the new playlists aren't exactly as planned")
+    except Exception as error:
+        problems = [f"the database couldn't be read back ({error})"]
+
+    if problems:
+        _restore(backup, db_path)
+        journal["state"] = "reverted"
+        _save_journal(journal_path, journal)
+        raise DatabaseError("Verification failed (" + "; ".join(problems) + ") and the backup was put back.")
+
+    journal["state"] = "verified"
+    _save_journal(journal_path, journal)
+
+    return ApplyResult(journal_path, backup, len(plan.safe) + len(plan.merge))
+
+
+def undo_review_playlists(journal_path: Path, backend: Backend, dry_run: bool = False) -> UndoResult:
+    """Delete the review playlists a run made (never their tracks), if they are still the ones it made."""
+    try:
+        journal = json.loads(Path(journal_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise DatabaseError(f"Could not read the journal {journal_path}.") from None
+
+    if journal.get("kind") != "review":
+        raise DatabaseError(f"{journal_path} is not a review-playlist journal.")
+
+    if not dry_run:
+        _require_rekordbox_closed()
+
+    db_path = Path(journal["database"])
+    by_id = {p.id: p for p in read_snapshot(db_path, backend).playlists}
+    result = UndoResult()
+    to_delete = []
+
+    for entry in journal["playlists"]:
+        playlist = by_id.get(entry["playlistId"])
+
+        if playlist is None:
+            result.skipped.append((entry["name"], "it is no longer there"))
+        elif playlist.name != entry["name"]:
+            result.skipped.append((entry["name"], "that playlist was renamed, so it was left alone"))
+        elif not set(playlist.content_ids) <= set(entry["contentIds"]):
+            result.skipped.append((entry["name"], "tracks were added to it since, so it was left alone"))
+        else:
+            to_delete.append(entry)
+            result.removed.append(entry["name"])
+
+    if dry_run or not to_delete:
+        return result
+
+    writer = backend.open_for_write(db_path)
+
+    try:
+        for entry in to_delete:
+            writer.delete_playlist(entry["playlistId"])
+
+        writer.commit()
+    except Exception as error:
+        writer.rollback()
+        writer.close()
+        raise DatabaseError(f"Removing the playlists failed: {error}") from None
+
+    writer.close()
+    journal["state"] = "undone"
+    _save_journal(Path(journal_path), journal)
+
+    return result

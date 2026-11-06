@@ -753,6 +753,111 @@ def report_stale_duplicates(database_path: str | None = None, limit: int = 25) -
     }
 
 
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+    )
+)
+@_translate_errors
+def create_review_playlists(
+    dry_run: bool = True,
+    expected_tracks: int | None = None,
+    database_path: str | None = None,
+) -> dict:
+    """Make two temporary Rekordbox playlists so the user can remove stale duplicate rows in Rekordbox itself.
+
+    Needs the Apple Music library loaded. The broken rows that have a twin
+    (see report_stale_duplicates) are put in:
+    - "CueBridge: remove (safe)": rows with no cue or playlist entry their twin
+      lacks. The user selects them all in Rekordbox and removes them from the
+      collection.
+    - "CueBridge: check cues first": rows that hold cues their twin lacks. The
+      user decides what to do with these.
+    This only ADDS two playlists to master.db; no track, cue or other playlist is
+    changed, and CueBridge never deletes a track. Rekordbox must be closed to
+    write; backup, read-back verification (restoring the backup on any
+    difference) and a journal work as in sync_playlists_to_rekordbox. Call it with
+    dry_run=true first, show the user the numbers, then dry_run=false with
+    expected_tracks set to "tracks". When the user has finished, call
+    undo_rekordbox_review_playlists to remove the two playlists.
+    """
+    music = _require_apple_library()
+    db_path = _db_target(database_path)
+    backend = rekordbox_db.default_backend()
+    snapshot = rekordbox_db.read_snapshot(db_path, backend)
+    plan = rekordbox_db.plan_review_playlists(snapshot, music)
+    running = rekordbox_db.rekordbox_running()
+    total = len(plan.safe) + len(plan.merge)
+
+    def listing(rows):
+        return [{"track": t, "artist": a} for _, t, a in rows[:60]]
+
+    result = {
+        "dryRun": dry_run,
+        "database": str(db_path),
+        "rekordboxIsRunning": running,
+        "tracks": total,
+        "safeToRemove": {"playlist": rekordbox_db.SAFE_PLAYLIST, "count": len(plan.safe), "tracks": listing(plan.safe)},
+        "checkCuesFirst": {"playlist": rekordbox_db.MERGE_PLAYLIST, "count": len(plan.merge), "tracks": listing(plan.merge)},
+    }
+
+    if not total:
+        result["summary"] = "Nothing to review: no broken row has a twin holding its real file."
+        return result
+
+    if dry_run:
+        result["summary"] = (
+            f"Would add two playlists holding {total} track(s). Nothing has been written."
+            + (" Quit Rekordbox before applying." if running else "")
+        )
+        return result
+
+    if expected_tracks != total:
+        raise ToolError(
+            f"This would list {total} tracks, but expected_tracks was {expected_tracks!r}. "
+            "Run a dry run, show the user the number, and pass it as expected_tracks."
+        )
+
+    outcome = rekordbox_db.apply_review_playlists(plan, db_path, music, backend)
+    result["backup"] = str(outcome.backup)
+    result["journal"] = str(outcome.journal)
+    result["summary"] = (
+        f"Added the review playlists ({total} tracks) and verified the database. Backup: {outcome.backup}. "
+        f"When the user is done, call undo_rekordbox_review_playlists (journal: {outcome.journal}). You can open Rekordbox now."
+    )
+    return result
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+    )
+)
+@_translate_errors
+def undo_rekordbox_review_playlists(journal: str | None = None, dry_run: bool = True) -> dict:
+    """Remove the two review playlists create_review_playlists made (never any track).
+
+    `journal` is the path it reported; the most recent one is used if omitted.
+    A playlist is only removed if it still has the name it was given and holds
+    only tracks that run put there. Rekordbox must be closed unless this is a
+    dry run.
+    """
+    path = Path(journal).expanduser() if journal else rekordbox_db.latest_journal(prefix=rekordbox_db.REVIEW_JOURNALS)
+
+    if path is None or not path.is_file():
+        raise ToolError("No review-playlist journal found. Pass the journal path from create_review_playlists.")
+
+    outcome = rekordbox_db.undo_review_playlists(path, rekordbox_db.default_backend(), dry_run=dry_run)
+
+    return {
+        "dryRun": dry_run,
+        "journal": str(path),
+        "removed" if not dry_run else "wouldRemove": outcome.removed,
+        "skipped": [{"playlist": e, "why": why} for e, why in outcome.skipped],
+        "summary": f"{'Would remove' if dry_run else 'Removed'} {len(outcome.removed)} playlist(s); {len(outcome.skipped)} skipped.",
+    }
+
+
 @mcp.tool(annotations=READ_ONLY)
 @_translate_errors
 def search_tracks(

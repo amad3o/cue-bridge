@@ -62,6 +62,8 @@ Start a new session (or run `/mcp`) and `cuebridge` should show as connected. Th
 | `undo_rekordbox_playlist_sync(journal, dry_run=True)` | Removes exactly the playlist entries a sync added. |
 | `fix_moved_files_in_rekordbox(dry_run=True, expected_fixes, database_path)` | Points Rekordbox tracks whose file was renamed or moved at the file Apple Music has (database; path and file name only). |
 | `undo_rekordbox_file_fix(journal, dry_run=True)` | Puts the old paths back. |
+| `create_review_playlists(dry_run=True, expected_tracks)` | Adds two temporary playlists to Rekordbox holding the stale duplicate rows (safe to remove; check cues first), so you can remove them in Rekordbox itself. Only adds playlists. |
+| `undo_rekordbox_review_playlists(journal, dry_run=True)` | Removes those two playlists (never tracks). |
 | `report_stale_duplicates(database_path, limit)` | Read-only. For broken Rekordbox rows whose real file Rekordbox already has under another row: cues and playlists on each, and whether the broken row is safe to remove or needs a merge. |
 | `set_default_cue(output_path, dry_run=True)` | Adds a hot cue A at 0:00 to every track with no cue or loop, in the loaded XML file (a backup is saved first). |
 | `duplicate_memory_cues_to_hot_cues(output_path, dry_run=True)` | Copies every memory cue to a hot cue at the same position, in the lowest free slots (A-H), in the loaded XML file. Memory cues are kept. A memory cue that already has a hot cue at the same time is skipped, so running it twice changes nothing. Cues beyond 8 are reported and not copied. |

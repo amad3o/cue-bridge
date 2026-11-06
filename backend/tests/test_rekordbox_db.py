@@ -28,6 +28,15 @@ class FakeWriter:
         playlist_ = next(p for p in self.state["playlists"] if p["id"] == playlist_id)
         playlist_["songs"] = [s for s in playlist_["songs"] if s[0] != song_id]
 
+    def create_playlist(self, name):
+        self.counter += 1
+        playlist_id = f"new-playlist-{self.backend.runs}-{self.counter}"
+        self.state["playlists"].append({"id": playlist_id, "name": name, "songs": []})
+        return playlist_id
+
+    def delete_playlist(self, playlist_id):
+        self.state["playlists"] = [p for p in self.state["playlists"] if p["id"] != playlist_id]
+
     def relocate(self, content_id, path, file_name, org_path):
         content = next(c for c in self.state["contents"] if c["id"] == content_id)
         content.update(path=path, file_name=file_name, org_path=org_path)
@@ -682,6 +691,141 @@ class TestStaleDuplicates:
         assert result["pairs"] == 1 and result["details"][0]["track"] == "Twice"
         assert result["details"][0]["goodRow"]["id"] == "c3"
         assert env["db"].read_bytes() == before
+
+
+class TestReviewPlaylists:
+    @pytest.fixture
+    def music(self, files):
+        return files["music"]
+
+    def plan(self, env, music):
+        return rd.plan_review_playlists(snapshot(env), music)
+
+    def apply(self, env, music):
+        return rd.apply_review_playlists(self.plan(env, music), env["db"], music, env["backend"])
+
+    def by_name(self, env):
+        return {p.name: p for p in snapshot(env).playlists}
+
+    def test_broken_rows_with_a_twin_are_listed_by_what_removing_them_would_lose(self, env, music):
+        plan = self.plan(env, music)
+
+        # c2 is in the playlist "Set" and its twin is not, so it needs a look; c5 is in "Set" too.
+        assert [r[0] for r in plan.safe] == []
+        assert sorted(r[0] for r in plan.merge) == ["c2", "c5"]
+
+    def test_a_row_that_loses_nothing_is_in_the_safe_playlist(self, env, music):
+        state = json.loads(env["db"].read_text())
+        state["playlists"][0]["songs"] = []  # neither broken row is in any playlist now
+        env["db"].write_text(json.dumps(state))
+
+        plan = self.plan(env, music)
+
+        assert sorted(r[0] for r in plan.safe) == ["c2", "c5"] and plan.merge == []
+
+    def test_only_two_playlists_are_added_and_nothing_else_changes(self, env, music):
+        before = snapshot(env)
+
+        self.apply(env, music)
+
+        after = snapshot(env)
+        assert after.contents == before.contents and after.cues == before.cues
+        assert [p for p in after.playlists if p.name not in (rd.SAFE_PLAYLIST, rd.MERGE_PLAYLIST)] == list(before.playlists)
+        assert set(self.by_name(env)) - {p.name for p in before.playlists} == {rd.MERGE_PLAYLIST}
+        assert sorted(self.by_name(env)[rd.MERGE_PLAYLIST].content_ids) == ["c2", "c5"]
+
+    def test_existing_review_playlists_stop_a_new_run(self, env, music):
+        self.apply(env, music)
+
+        with pytest.raises(rd.DatabaseError, match="already has a playlist"):
+            self.plan(env, music)
+
+    def test_rekordbox_must_be_closed(self, env, music, monkeypatch):
+        plan = self.plan(env, music)
+        monkeypatch.setattr(rd, "rekordbox_running", lambda: True)
+        before = env["db"].read_bytes()
+
+        with pytest.raises(rd.DatabaseError):
+            rd.apply_review_playlists(plan, env["db"], music, env["backend"])
+
+        assert env["db"].read_bytes() == before
+
+    def test_a_failed_write_puts_the_backup_back(self, env, music):
+        before = env["db"].read_bytes()
+        env["backend"].commit_raises = True
+
+        with pytest.raises(rd.DatabaseError, match="backup was put back"):
+            self.apply(env, music)
+
+        assert env["db"].read_bytes() == before
+
+    def test_damage_found_afterwards_puts_the_backup_back(self, env, music):
+        before = env["db"].read_bytes()
+        env["backend"].tamper = True
+
+        with pytest.raises(rd.DatabaseError, match="Verification failed"):
+            self.apply(env, music)
+
+        assert env["db"].read_bytes() == before
+
+    def test_a_stale_plan_is_refused(self, env, music):
+        plan = self.plan(env, music)
+        state = json.loads(env["db"].read_text())
+        state["contents"] = [c for c in state["contents"] if c["id"] != "c2"]
+        env["db"].write_text(json.dumps(state))
+
+        with pytest.raises(rd.DatabaseError, match="changed since"):
+            rd.apply_review_playlists(plan, env["db"], music, env["backend"])
+
+    def test_undo_removes_the_playlists_and_no_tracks(self, env, music):
+        original = snapshot(env)
+        result = self.apply(env, music)
+
+        outcome = rd.undo_review_playlists(result.journal, env["backend"])
+
+        assert outcome.removed == [rd.MERGE_PLAYLIST]
+        assert snapshot(env) == original
+
+    def test_undo_works_after_rekordbox_removed_the_tracks(self, env, music):
+        result = self.apply(env, music)
+        state = json.loads(env["db"].read_text())
+        state["contents"] = [c for c in state["contents"] if c["id"] not in ("c2", "c5")]
+        for playlist_ in state["playlists"]:
+            playlist_["songs"] = [x for x in playlist_["songs"] if x[1] not in ("c2", "c5")]
+        env["db"].write_text(json.dumps(state))
+
+        outcome = rd.undo_review_playlists(result.journal, env["backend"])
+
+        assert outcome.removed == [rd.MERGE_PLAYLIST]
+        assert rd.MERGE_PLAYLIST not in self.by_name(env)
+
+    def test_undo_leaves_a_playlist_that_gained_other_tracks(self, env, music):
+        result = self.apply(env, music)
+        state = json.loads(env["db"].read_text())
+        next(p for p in state["playlists"] if p["name"] == rd.MERGE_PLAYLIST)["songs"].append(["x", "c1"])
+        env["db"].write_text(json.dumps(state))
+
+        outcome = rd.undo_review_playlists(result.journal, env["backend"])
+
+        assert outcome.removed == [] and outcome.skipped[0][0] == rd.MERGE_PLAYLIST
+        assert rd.MERGE_PLAYLIST in self.by_name(env)
+
+    def test_undo_leaves_a_renamed_playlist(self, env, music):
+        result = self.apply(env, music)
+        state = json.loads(env["db"].read_text())
+        next(p for p in state["playlists"] if p["name"] == rd.MERGE_PLAYLIST)["name"] = "My set"
+        env["db"].write_text(json.dumps(state))
+
+        outcome = rd.undo_review_playlists(result.journal, env["backend"])
+
+        assert outcome.removed == [] and "My set" in self.by_name(env)
+
+    def test_a_location_journal_is_not_a_review_journal(self, env, tmp_path):
+        journal = tmp_path / "x.json"
+        journal.write_text(json.dumps({"database": str(env["db"]), "relocations": []}))
+
+        with pytest.raises(rd.DatabaseError, match="not a review-playlist journal"):
+            rd.undo_review_playlists(journal, env["backend"])
 
 
 class TestRelocationTools:
