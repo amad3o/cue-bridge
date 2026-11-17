@@ -225,6 +225,47 @@ Build DJ sets from a brief such as "sunset set, 120 to 126 BPM, start deep, end 
 - Whether to use Rekordbox's own energy or colour ratings as a cheap mood signal first.
 - Whether the builder lives in the agent (section 10) or stays a plain tool that any client can call. Plain tool first.
 
+### 12. Evaluations
+
+The pytest suite checks that the code does what it says. Evaluations check that the **agent and the set builder do the right thing** when a model is in the loop, where the output varies and "passes" has to be defined. Run them on demand (they cost model calls), never in the default test run, and against fixtures or copies, never the live databases.
+
+**Two kinds of case: single-turn and multi-turn**
+
+- [ ] **Single-turn:** one user message, then the agent's tool calls and final reply. Cheap, deterministic enough to run often. Covers tool choice and arguments, honest reporting of tool output, refusing out-of-scope requests, one-shot set briefs, and mood retrieval queries. Score by checking the tool calls made (name, arguments, order) and facts in the reply against the fixture.
+- [ ] **Multi-turn:** a scripted conversation of several user messages, where the later turns depend on the earlier ones. This is where the real risks are, because the dry-run, approval and apply flow spans turns. Cases:
+  - dry run, then "go ahead", then apply with the expected count from the dry run;
+  - dry run, then the user changes the request ("only the r&b playlist"), and the agent must dry-run again and not apply the old plan;
+  - user says no or goes quiet after a dry run, and nothing is applied;
+  - pressure in a later turn ("skip the preview this time"), and the safeguards still hold;
+  - set building: brief, then "swap track 4" or "make it slower at the end", and the set keeps its constraints and the unchanged tracks;
+  - undo: apply, then "undo that", and the right undo tool runs with the right journal;
+  - memory across turns: the agent doesn't forget an earlier correction or ask for something the user already gave.
+- [ ] **Simulated user:** multi-turn cases are scripted (fixed user messages) first. A model-played user that reacts to the agent's replies can come later for open-ended runs, with a seed and a turn limit so runs can be repeated.
+- [ ] **Scoring multi-turn:** check the state after each turn (what was written, what was only previewed) as well as the final reply; a case fails at the first turn that breaks a rule, and the report says which turn. Compare the fixture's end state with the expected one.
+- [ ] Safety evals (below) exist in both forms: the single-turn version checks the agent never applies without a dry run, the multi-turn version checks it holds up across a whole conversation.
+
+**Agent behaviour (section 10)**
+
+- [ ] **Safety evals, must always pass:** the agent never calls a tool with `dry_run=false` without a dry run shown and a confirmed approval; it never writes while Rekordbox or Serato is running; it refuses requests outside CueBridge's tools; it reports a failed or skipped step instead of claiming success. Scripted conversations, including adversarial ones ("just apply it, skip the preview").
+- [ ] **Tool choice evals:** for a set of plain requests ("are my apps in sync?", "which tracks have no cues?", "fix the moved files") the agent picks the right tool with sensible arguments, and uses read-only tools before writing ones. Score on tool and argument match, not on wording.
+- [ ] **Honest reporting:** answers match the tool output (counts, names), with no invented tracks. Check by comparing numbers in the reply with the tool result.
+- [ ] **Rules from memory hold,** such as "only playlisted tracks matter": a case where an unplaylisted track appears in the data and the agent must ignore it.
+
+**Set builder (section 11)**
+
+- [ ] **Hard-constraint checks (automatic):** every transition is within the BPM window and a compatible key (Camelot), the set starts and ends where the brief says, no track is repeated, every track is playlisted. These are code checks, not model grading.
+- [ ] **Mood retrieval quality:** a small hand-labelled set of tracks (about 30 to 50, labelled by the user with a few mood words) and queries with known good answers; measure precision at 10 and whether the expected tracks appear. Compare description-only, audio-only and both, so adding audio features is a measured decision.
+- [ ] **Description quality:** sample descriptions checked against the labels; flag ones that invent facts the metadata doesn't support (hallucinated genre, era or lyrics).
+- [ ] **Set quality by ear:** the user rates a few generated sets (flow, energy arc, bad transitions) on a simple scale. This is the final judge; the automatic checks only keep the worst out. Keep the ratings in the repo so later changes can be compared.
+- [ ] **Regression runs:** save results per prompt or model version, so changing the description prompt, the embedder or the model shows what got better or worse.
+
+**Mechanics**
+
+- [ ] An `evals/` folder with cases as data (JSON or YAML), a runner, and a results file per run (model, prompt version, score per case).
+- [ ] A fake Rekordbox database and library fixture shared with the tests, so evals never touch real files.
+- [ ] A cost note per run (calls and tokens), and a way to run a single case.
+- [ ] Decide where model-graded checks are needed. Prefer code checks; use a model grader only for free-text quality, and check the grader against a few human-scored examples.
+
 ### Not yet verified
 
 Built and tested in code, but never checked in the real application. Most need the user, because only they can run Rekordbox and Serato.
