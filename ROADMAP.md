@@ -191,6 +191,8 @@ Today the MCP client is Claude Code, so the conversation, the per-call approvals
 - [ ] **Own approval step for destructive tools.** The dry run is shown and the user confirms before `dry_run=false`, enforced by our code rather than Claude Code's per-call prompt (this also answers the weakness noted in section 5).
 - [ ] **System prompt and guardrails.** Move the server's instructions and the memory notes (for example, only playlisted tracks matter) into the agent's own prompt; restrict it to CueBridge's tools.
 - [ ] **Cost and context control.** Paginated tool output already helps; add a budget per session and trimming of long tool results.
+- [ ] **Agent database (SQLite, outside Dropbox, e.g. `~/Library/Application Support/cuebridge/agent.db`).** Holds conversation history (to resume a session) and an audit log of every destructive call: the dry run shown, the user's approval and the result. Build the terminal loop first with history in memory; add the audit log as the first table when the approval step is built. Dropbox is avoided because SQLite on a synced folder can corrupt.
+- [ ] **What the database does not hold.** The undo journals stay as JSON files next to what they protect (a database could be locked or corrupted when an undo is needed; at most it indexes them). Library data is never copied in: Apple Music, Rekordbox and Serato are read live, so there is nothing to keep in sync. The one derived cache, the mood vectors, is described in section 11.
 - [ ] **Tests.** A scripted-model test that the agent refuses to apply without a confirmed dry run.
 - [ ] **Config.** API key handling (environment variable or keychain, never in the repo) and model choice.
 
