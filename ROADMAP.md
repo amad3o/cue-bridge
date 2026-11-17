@@ -182,6 +182,18 @@ The database reader sees every track, playlist, cue and beat grid in the live co
 - [ ] Decide what replaces `set_default_cue` and `duplicate_memory_cues_to_hot_cues`: database writes with the same safeguards, or text-patched XML (known issue 2). Rekordbox must be closed for database writes.
 - [ ] Rekordbox's own "auto export collection" setting was found disabled (`CollectionAutoExportEnable`, path `~/Dropbox/rekordbox/xml`) and was enabled by the user; check whether it writes an XML by itself, which would be a simpler route.
 
+### 10. Our own agent (instead of relying on Claude Code)
+
+Today the MCP client is Claude Code, so the conversation, the per-call approvals and the model loop all live in someone else's tool. The goal is to run CueBridge's own agent: a small program of ours that talks to the model and calls the same tools, so the behaviour, the prompts and the safety checks belong to this project. This would change the "Claude Code is the MCP client" assumption in the scope note at the top.
+
+- [ ] **Decide the shape.** Options: the Claude Agent SDK, or the Messages API with a tool-use loop (`claude-api` skill for current model ids and params). Either can load the existing MCP server over stdio, so the 24 tools stay as they are.
+- [ ] **Entry point.** A way to start it (a terminal chat loop first; the web UI in section 7 could sit on it later).
+- [ ] **Own approval step for destructive tools.** The dry run is shown and the user confirms before `dry_run=false`, enforced by our code rather than Claude Code's per-call prompt (this also answers the weakness noted in section 5).
+- [ ] **System prompt and guardrails.** Move the server's instructions and the memory notes (for example, only playlisted tracks matter) into the agent's own prompt; restrict it to CueBridge's tools.
+- [ ] **Cost and context control.** Paginated tool output already helps; add a budget per session and trimming of long tool results.
+- [ ] **Tests.** A scripted-model test that the agent refuses to apply without a confirmed dry run.
+- [ ] **Config.** API key handling (environment variable or keychain, never in the repo) and model choice.
+
 ### Not yet verified
 
 Built and tested in code, but never checked in the real application. Most need the user, because only they can run Rekordbox and Serato.
@@ -211,5 +223,6 @@ Where we paused (2026-11-06): the library is fully in sync (Apple Music, Rekordb
 3. **`.aif` cues.** One playlisted track is skipped because the Serato writer doesn't handle AIFF.
 4. **Drop the XML for the playlist export.** `export_playlists_for_rekordbox` and the two XML edit tools still need a fresh export (a stale one caused a detour today). Move them to the database or drop them.
 5. Then the cue comparison (section 4), the housekeeping (known issue 1: pin the Python version, add CI and lint) and the metadata reports (section 8).
+6. **Our own agent** (section 10): pick the SDK or raw API, then a terminal loop with our own dry-run approval step.
 
 Left alone on purpose: the Rekordbox-only playlist `Trial playlist - Cloud Library Sync`.
