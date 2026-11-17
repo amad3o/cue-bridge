@@ -194,6 +194,35 @@ Today the MCP client is Claude Code, so the conversation, the per-call approvals
 - [ ] **Tests.** A scripted-model test that the agent refuses to apply without a confirmed dry run.
 - [ ] **Config.** API key handling (environment variable or keychain, never in the repo) and model choice.
 
+### 11. Set builder (mood, key and tempo)
+
+Build DJ sets from a brief such as "sunset set, 120 to 126 BPM, start deep, end euphoric". Key and tempo are structured data and need no retrieval; mood is the only fuzzy part. Building a set is an ordering problem, not a search, so the code scores and orders and the model only turns the brief into filters and an energy arc.
+
+**Stage 1: key and BPM, no new storage**
+
+- [ ] Read BPM and key per track from the Rekordbox database (`db_library.py`), playlisted tracks only.
+- [ ] Camelot wheel helper: compatible keys (same, +/-1, relative major or minor) and a key distance.
+- [ ] Pairwise transition score (key distance, BPM step, later mood drift) and a greedy sequence builder with a start, an end and an energy arc.
+- [ ] Tool `build_set` (read-only): returns an ordered list with the score of each transition, for review.
+- [ ] Write the result as a Rekordbox playlist through the existing playlist tools, with the dry run, journal and undo they already have.
+
+**Stage 2: mood**
+
+- [ ] **Text descriptions (the RAG part).** For each playlisted track, the model writes a short mood description from what CueBridge knows: title, artist, genre, BPM, key, cue count and positions, the playlists it is in, and the audio-derived tags below. Each description is written into the track's **Comments field in Rekordbox** (`djmdContent`, through the database tools), **overwriting whatever comment is there**, so the description is visible and searchable in Rekordbox itself. It is also embedded as text for retrieval. At build time the brief retrieves the closest descriptions, and the model reads the retrieved tracks and their descriptions to choose and order candidates and to explain the choices ("I opened with X because..."). This is real RAG: retrieval, then generation grounded in what was retrieved.
+- [ ] **Audio signal alongside it.** The model can't hear, so descriptions written from metadata alone will be weak. Add audio-derived features (a local model such as CLAP or Essentia's mood and energy classifiers) as tags and an audio embedding per track, and feed those tags into the description. Audio embeddings also give a second, independent retrieval signal. Start with the text descriptions, add audio features as soon as the first results show the metadata isn't enough.
+- [ ] Mood query: nearest-neighbour search over the description vectors (and audio vectors once they exist), used as a filter and as the mood-drift term in the transition score. The model reads the retrieved descriptions; the code still does the scoring and ordering.
+- [ ] **Comments write (an action, so the usual safeguards).** A tool `write_mood_comments`: dry run by default showing the track count and a few before and after comments; Rekordbox closed; backup and check of the database files; a journal that records **each track's previous comment** so the overwrite can be undone (`undo_mood_comments`); read-back verification. The overwrite is the chosen behaviour; the journal is what keeps it recoverable.
+- [ ] Store in SQLite outside Dropbox: the vector blobs per track (the description text lives in the Rekordbox comment and a copy here), keyed on file path plus size and mtime, regenerated only for files that changed (or when the description prompt version changes). The vectors are derived data, a cache that refills. The comments are the one thing written back to Rekordbox, so if someone edits a comment in Rekordbox, the stored copy is stale: the next run compares the comment to the stored text and re-embeds or flags it. NumPy is enough for the search at this scale (about 1,700 playlisted tracks); `sqlite-vec` only if the library grows far larger.
+- [ ] Cost: one model call per track for the descriptions, so run them as a one-off batch with a dry run showing the track count, and re-run only for changed tracks.
+- [ ] Check by ear on a few real sets whether the mood ordering matches what a person would choose.
+
+**Open questions**
+
+- Which embedding models to use: a text embedder for the descriptions, and which audio model sounds right for the genres in the library (needs a trial).
+- How good descriptions written from metadata alone are, and how much the audio tags improve them.
+- Whether to use Rekordbox's own energy or colour ratings as a cheap mood signal first.
+- Whether the builder lives in the agent (section 10) or stays a plain tool that any client can call. Plain tool first.
+
 ### Not yet verified
 
 Built and tested in code, but never checked in the real application. Most need the user, because only they can run Rekordbox and Serato.
