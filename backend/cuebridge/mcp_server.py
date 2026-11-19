@@ -16,7 +16,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cuebridge.services import drift, library_queries, library_reports, playlist_export, rekordbox_cue_writes, rekordbox_db, rekordbox_editor, serato_sync, sync_check, db_library
+from cuebridge.services import drift, library_queries, library_reports, playlist_export, cue_compare, rekordbox_cue_writes, rekordbox_db, rekordbox_editor, serato_sync, sync_check, db_library
 from cuebridge.parsers.apple_music_xml import MusicLibrary
 from cuebridge.services import apple_music_live
 from cuebridge.services import rekordbox_service
@@ -1249,6 +1249,7 @@ class CueSource:
     label: str
     notes: list[str]
     from_xml: bool
+    playlisted: set[str] | None = None  # IDs of tracks in a real playlist (known when read from the database)
 
 
 def _cue_source(choice: str = "auto", database_path: str | None = None) -> CueSource:
@@ -1280,7 +1281,9 @@ def _cue_source(choice: str = "auto", database_path: str | None = None) -> CueSo
             if library.beat_grids_missing:
                 notes.append(f"{library.beat_grids_missing} track(s) with cues have no readable beat grid.")
 
-            return CueSource(library.tracks, library.tracks_by_id, "Rekordbox's database (live)", notes, False)
+            playlisted = {c for p in snapshot.playlists if p.is_plain for c in p.content_ids}
+
+            return CueSource(library.tracks, library.tracks_by_id, "Rekordbox's database (live)", notes, False, playlisted)
         except Exception as error:
             if choice == "database":
                 raise ToolError(f"Could not read Rekordbox's database: {error}") from None
@@ -1301,6 +1304,130 @@ def _cue_source(choice: str = "auto", database_path: str | None = None) -> CueSo
         notes.append(f"The database couldn't be read: {failure}")
 
     return CueSource(xml.tracks, xml.tracks_by_id, f"the Rekordbox XML export ({xml.path})", notes, True)
+
+
+COMPARE_SHOW = ("differences", "differs", "rekordbox_only", "serato_only", "skipped", "match", "all")
+
+
+@mcp.tool(annotations=READ_ONLY)
+@_translate_errors
+def compare_cues(
+    show: str = "differences",
+    limit: int = 25,
+    offset: int = 0,
+    cue_source: str = "auto",
+    include_memory_cues: bool = True,
+    use_apple_music_paths: bool = True,
+    playlisted_only: bool = True,
+    database_path: str | None = None,
+) -> dict:
+    """Compare Rekordbox's cues with the cues in Serato's tags. Read-only: nothing is changed.
+
+    Reports, per track: cues Rekordbox has and Serato lacks, Serato cues Rekordbox
+    lacks (a sync_cues_to_serato run would remove those, so look here before syncing),
+    and cues in both that differ in position (with how many ms), colour or name.
+    "What Serato should hold" follows the sync's own rules (hot cues in their slots,
+    memory cues in the free slots when include_memory_cues is true, the timing
+    correction for the file type), so a track that matches is one the sync would
+    leave alone. MP3 and WAV only; loops aren't compared yet (they are counted).
+
+    `show` picks which tracks to list: "differences" (the default: any track that
+    differs, has cues only in Rekordbox, or only in Serato), or one of "differs",
+    "rekordbox_only", "serato_only", "skipped" (files that couldn't be read, with
+    why), "match", or "all". The counts always cover every track compared. Results
+    are paged with `limit` and `offset`.
+
+    Rekordbox's cues come from its live database when it can be read (see
+    `cue_source`, as in sync_cues_to_serato). Tracks with cues in Rekordbox are
+    always compared; tracks without any are compared too if they are in a playlist
+    (that is how Serato-only cues are found), or every track with
+    `playlisted_only=false` (thousands of files, so slower). With an XML export
+    there is no playlist information, so only tracks with Rekordbox cues are read.
+    Reading the files' tags takes a moment for a big library.
+    """
+    if show not in COMPARE_SHOW:
+        raise ToolError(f"show must be one of: {', '.join(COMPARE_SHOW)}.")
+
+    library = _cue_source(cue_source, database_path)
+    music = _apple_library() if use_apple_music_paths else None
+    moved = (
+        library_reports.moved_file_paths(library_reports.find_missing_rekordbox_files(library.tracks, music))
+        if music
+        else None
+    )
+    scope_note = None
+
+    if playlisted_only and library.playlisted is not None:
+        tracks = [t for t in library.tracks if t.cues or t.trackId in library.playlisted]
+    elif playlisted_only:
+        tracks = [t for t in library.tracks if t.cues]
+        scope_note = "Read from an XML export, which has no playlist information: only tracks with Rekordbox cues were compared."
+    else:
+        tracks = list(library.tracks)
+
+    comparison = cue_compare.compare_cues(tracks, moved, include_memory_cues)
+    wanted = {
+        "differences": (cue_compare.DIFFERS, cue_compare.REKORDBOX_ONLY, cue_compare.SERATO_ONLY),
+        "all": tuple(i.status for i in comparison.items),
+    }.get(show, (show,))
+    order = {cue_compare.DIFFERS: 0, cue_compare.REKORDBOX_ONLY: 1, cue_compare.SERATO_ONLY: 2}
+    matching = sorted(
+        comparison.with_status(*wanted), key=lambda i: (order.get(i.status, 3), (i.title or "").casefold(), i.track_id)
+    )
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    page = matching[offset : offset + limit]
+    counts = comparison.counts
+
+    return {
+        "cuesFrom": library.label,
+        "cueNotes": library.notes + ([scope_note] if scope_note else []),
+        "tracksCompared": len(comparison.items),
+        "match": counts[cue_compare.MATCH],
+        "differ": counts[cue_compare.DIFFERS],
+        "cuesOnlyInRekordbox": counts[cue_compare.REKORDBOX_ONLY],
+        "cuesOnlyInSerato": counts[cue_compare.SERATO_ONLY],
+        "noCuesAnywhere": counts[cue_compare.NO_CUES],
+        "skipped": counts[cue_compare.SKIPPED],
+        "skippedBecause": dict(comparison.skip_reasons),
+        "differencesByKind": dict(comparison.difference_kinds),
+        "loopsNotCompared": comparison.loops_not_compared,
+        "shown": show,
+        "total": len(matching),
+        "returned": len(page),
+        "hasMore": offset + len(page) < len(matching),
+        "tracks": [
+            {
+                "trackId": i.track_id,
+                "title": i.title,
+                "artist": i.artist,
+                "file": str(i.path) if i.path else None,
+                "status": i.status,
+                "note": i.reason,
+                "rekordboxCues": i.rekordbox_cues,
+                "seratoCues": i.serato_cues,
+                "differences": [
+                    {"slot": d.slot, "kind": d.kind, "rekordbox": d.rekordbox, "serato": d.serato, "deltaMs": d.delta_ms}
+                    for d in i.differences
+                ],
+            }
+            for i in page
+        ],
+        "summary": (
+            f"Compared {len(comparison.items)} tracks: {counts[cue_compare.MATCH]} match, {counts[cue_compare.DIFFERS]} differ, "
+            f"{counts[cue_compare.REKORDBOX_ONLY]} have cues only in Rekordbox, {counts[cue_compare.SERATO_ONLY]} only in Serato, "
+            f"{counts[cue_compare.SKIPPED]} skipped. Nothing was changed."
+            + (
+                f" sync_cues_to_serato would rewrite Serato's cues on {counts[cue_compare.DIFFERS] + counts[cue_compare.REKORDBOX_ONLY]} of "
+                "these tracks (Rekordbox wins, so Serato-only cues on them are removed)."
+                if counts[cue_compare.DIFFERS] + counts[cue_compare.REKORDBOX_ONLY] else ""
+            )
+            + (
+                f" The {counts[cue_compare.SERATO_ONLY]} Serato-only tracks have no Rekordbox cues, so the sync leaves them alone."
+                if counts[cue_compare.SERATO_ONLY] else ""
+            )
+        ),
+    }
 
 
 @mcp.tool(

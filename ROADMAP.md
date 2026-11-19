@@ -21,7 +21,7 @@ The loop that was the goal now works end to end with no manual export:
 
 ## Completed
 
-**MCP server** (`cuebridge/mcp_server.py`, stdio, `mcp` 2.x; registered in Claude Code). 25 tools, all returning compact, paginated output. The tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
+**MCP server** (`cuebridge/mcp_server.py`, stdio, `mcp` 2.x; registered in Claude Code). 26 tools, all returning compact, paginated output. The tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
 
 | Area                 | Tools                                                                                                                                                                                                                                  |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -29,7 +29,7 @@ The loop that was the goal now works end to end with no manual export:
 | Rekordbox cues, write | `set_default_cue`, `duplicate_memory_cues_to_hot_cues`, `undo_rekordbox_cue_additions` (database)                                                                                                                                     |
 | Serato               | `sync_cues_to_serato`, `undo_serato_sync`                                                                                                                                                                                              |
 | Apple Music          | `load_apple_music_library` (live from the Music app, or an exported XML), `get_playlist_tracks`                                                                                                                                        |
-| Compare              | `compare_libraries`, `list_library_differences`, `find_missing_files`                                                                                                                                                                  |
+| Compare              | `compare_libraries`, `list_library_differences`, `find_missing_files`, `compare_cues`                                                                                                                                                                  |
 | Playlists            | `export_playlists_for_rekordbox` (XML, for getting new tracks in), `sync_playlists_to_rekordbox`, `undo_rekordbox_playlist_sync` (database)                                                                                            |
 | Overview             | `check_sync_status` (read-only report across the three apps, naming the fix for each difference)                                                                                                                                       |
 | Broken paths         | `fix_moved_files_in_rekordbox`, `undo_rekordbox_file_fix` (database), `report_stale_duplicates` (read-only), `create_review_playlists`, `undo_rekordbox_review_playlists`, `clean_up_stale_duplicates`, `undo_stale_duplicate_cleanup` |
@@ -45,7 +45,7 @@ The loop that was the goal now works end to end with no manual export:
 - `check_sync_status` (`sync_check.py`): one read-only report across Apple Music, Rekordbox and Serato, with each part reported as not checkable instead of failing.
 - The Rekordbox XML is edited as text (new lines only, original bytes untouched) for the playlist export, because Rekordbox rejects an XML library's rewrite of its file.
 - Pydantic models, root `.gitignore`, README rewritten around the MCP server.
-- 705 pytest tests (a shared fixture keeps every test away from the real Rekordbox database): parsers, services, the Serato codecs and sync on mutagen-built files, the XML patcher, the database logic against a fake database (with mutation checks on the safeguards), and the tools, directly and through an in-memory MCP client.
+- 738 pytest tests (a shared fixture keeps every test away from the real Rekordbox database): parsers, services, the Serato codecs and sync on mutagen-built files, the XML patcher, the database logic against a fake database (with mutation checks on the safeguards), and the tools, directly and through an in-memory MCP client.
 
 **Web UI (prototype, on hold)**
 
@@ -76,7 +76,7 @@ backend/cuebridge/
   services/              path-based logic
     rekordbox_service.py (validate, cache, pending-playlist note), library_queries.py,
     rekordbox_editor.py (safe XML writing), rekordbox_cue_writes.py (cues to the database), cue_rules.py, cue_timing.py,
-    serato_sync.py, apple_music_service.py, apple_music_live.py,
+    serato_sync.py, cue_compare.py, apple_music_service.py, apple_music_live.py,
     track_matcher.py, drift.py, library_reports.py,
     playlist_export.py (XML patcher), rekordbox_db.py (database)
   web/main.py            FastAPI app for the prototype UI
@@ -116,7 +116,7 @@ backend/cuebridge/
 
 - [x] Match tracks across systems (section 8).
 - [x] `compare_libraries` and `list_library_differences` for tracks and playlists.
-- [ ] **Compare cues**: tracks with cues in one program and not the other, Serato cues Rekordbox lacks (the reverse of the sync), counts and colors.
+- [x] **Compare cues** (`compare_cues`, read-only, 2026-11-18): per track, cues only in Rekordbox, cues only in Serato (the reverse of the sync), and position (ms), colour and name differences, by the sync's own rules. First run on the real library: 1,545 playlisted tracks compared, 45 match, 1 differs (Sex: a Serato cue sits where Rekordbox now has a hot loop), 194 have cues only in Serato (mostly a single cue at about 0:00 in red or green, which the sync never touches because those tracks have no Rekordbox cues), 23 skipped (M4A, AIFF, one streaming track). Still to do: compare loops once Serato `LOOP` entries are read, M4A/AIFF/FLAC.
 
 ### 5. Convert and export
 

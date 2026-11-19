@@ -70,6 +70,7 @@ class TestRegistration:
             "check_sync_status",
             "undo_rekordbox_review_playlists",
             "undo_rekordbox_cue_additions",
+            "compare_cues",
             "set_default_cue",
             "duplicate_memory_cues_to_hot_cues",
             "sync_cues_to_serato",
@@ -84,7 +85,7 @@ class TestRegistration:
             # They change real files or Rekordbox's database, so clients should confirm.
             assert tools[name].annotations.destructive_hint is True
 
-        for name in ("load_rekordbox_library", "search_tracks", "get_track_cues", "find_tracks_without_cues"):
+        for name in ("load_rekordbox_library", "search_tracks", "get_track_cues", "find_tracks_without_cues", "compare_cues"):
             assert tools[name].annotations.read_only_hint is True
 
 
