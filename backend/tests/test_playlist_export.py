@@ -1,4 +1,5 @@
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -225,6 +226,53 @@ class TestTool:
         server.load_rekordbox_library(str(rb_path))
         server.load_apple_music_library(str(apple))
         return tmp_path
+
+    @pytest.fixture
+    def database(self, loaded, monkeypatch):
+        """A Rekordbox database file as old as the export, found as Rekordbox's own."""
+        from cuebridge.services import rekordbox_db
+
+        path = loaded / "master.db"
+        path.write_bytes(b"db")
+        export = loaded / "rekordbox.xml"
+        os.utime(path, (export.stat().st_atime, export.stat().st_mtime))
+        monkeypatch.setattr(rekordbox_db, "find_database", lambda: path)
+        return path
+
+    def test_an_export_older_than_the_database_is_refused_even_for_a_dry_run(self, loaded, database):
+        export = loaded / "rekordbox.xml"
+        before = export.read_bytes()
+        newer = export.stat().st_mtime + 3600
+        os.utime(database, (newer, newer))
+
+        for dry_run in (True, False):
+            with pytest.raises(ToolError, match="File > Export Collection"):
+                server.export_playlists_for_rekordbox(dry_run=dry_run)
+
+        assert export.read_bytes() == before and not list(loaded.glob("*.backup-*"))
+
+    def test_the_stale_export_check_can_be_overridden(self, loaded, database):
+        newer = (loaded / "rekordbox.xml").stat().st_mtime + 3600
+        os.utime(database, (newer, newer))
+
+        result = server.export_playlists_for_rekordbox(allow_stale_export=True)
+
+        assert result["dryRun"] is True and result["playlists"]
+
+    def test_a_database_a_few_minutes_newer_is_still_fine(self, loaded, database):
+        newer = (loaded / "rekordbox.xml").stat().st_mtime + 120
+        os.utime(database, (newer, newer))
+
+        assert server.export_playlists_for_rekordbox()["dryRun"] is True
+
+    def test_an_export_newer_than_the_database_is_fine(self, loaded, database):
+        older = (loaded / "rekordbox.xml").stat().st_mtime - 3600
+        os.utime(database, (older, older))
+
+        assert server.export_playlists_for_rekordbox()["dryRun"] is True
+
+    def test_without_a_database_there_is_nothing_to_compare_with(self, loaded):
+        assert server.export_playlists_for_rekordbox()["dryRun"] is True
 
     def test_a_dry_run_writes_nothing(self, loaded):
         export = loaded / "rekordbox.xml"

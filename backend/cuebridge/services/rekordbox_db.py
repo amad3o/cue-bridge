@@ -32,7 +32,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Protocol
 
@@ -203,22 +203,74 @@ class PyrekordboxWriter:
 
                 self._insert(table, row)
 
-    def copy_cues(self, from_content_id: str, to_content_id: str, cue_ids: list[str]) -> dict:
-        import json
+    @staticmethod
+    def _stamps() -> tuple[str, str]:
+        """The current time as the database column writes it and as the contentCue JSON writes it."""
+        stamp = datetime.now().astimezone()
+        zone = stamp.strftime("%z")
+        zone = zone[:3] + ":" + zone[3:]
+        millis = f"{stamp.microsecond // 1000:03d}"
+        return stamp.strftime("%Y-%m-%d %H:%M:%S.") + millis + " " + zone, stamp.strftime("%Y-%m-%dT%H:%M:%S.") + millis + zone
+
+    @staticmethod
+    def _unused_cue_id(used: set) -> str:
         import uuid
-        from datetime import datetime
+
+        new_id = str(uuid.uuid4().int % 4_000_000_000)
+
+        while new_id in used:
+            new_id = str(uuid.uuid4().int % 4_000_000_000)
+
+        used.add(new_id)
+        return new_id
+
+    def _store_cues(self, to_content_id: str, rows: list[dict], json_stamp: str) -> dict:
+        """Insert the cue rows and add them to the track's contentCue JSON. Returns what undo needs."""
+        import uuid
+
+        entries = []
+
+        for row in rows:
+            self._insert("djmdCue", row)
+            # Rekordbox leaves empty fields out of the JSON copy, and writes its own timestamp format there.
+            entries.append({
+                k: (json_stamp if k in ("created_at", "updated_at") else row.get(k))
+                for k in self._CUE_JSON_FIELDS if row.get(k) is not None
+            })
+
+        created = [r["ID"] for r in rows]
+        existing = self._rows("contentCue", "ContentID", to_content_id)
+
+        if existing:
+            previous, count = existing[0]["Cues"], existing[0]["rb_cue_count"]
+            merged = json.loads(previous or "[]") + entries
+            self._sql(
+                'update "contentCue" set "Cues" = :c, "rb_cue_count" = :n where "ID" = :i',
+                c=json.dumps(merged, separators=(",", ":")), n=len(merged) if count is not None else None, i=existing[0]["ID"],
+            )
+            return {"cueIds": created, "contentCue": {"previous": previous, "id": existing[0]["ID"], "previousCount": count}}
+
+        row_id = str(uuid.uuid4())
+        self._insert("contentCue", {
+            "ID": row_id, "ContentID": to_content_id, "Cues": json.dumps(entries, separators=(",", ":")),
+            "rb_cue_count": len(entries), "UUID": str(uuid.uuid4()), "rb_data_status": 0, "rb_local_data_status": 0,
+            "rb_local_deleted": 0, "rb_local_synced": 0, "usn": None, "rb_local_usn": None,
+            "created_at": rows[0]["created_at"], "updated_at": rows[0]["created_at"],
+        })
+        return {"cueIds": created, "contentCue": {"created": row_id}}
+
+    def copy_cues(self, from_content_id: str, to_content_id: str, cue_ids: list[str]) -> dict:
+        import uuid
 
         target = self._rows("djmdContent", "ID", to_content_id)
 
         if len(target) != 1:
             raise DatabaseError(f"Track {to_content_id} is not in the database.")
 
-        stamp = datetime.now().astimezone()
-        db_stamp = stamp.strftime("%Y-%m-%d %H:%M:%S.") + f"{stamp.microsecond // 1000:03d} " + stamp.strftime("%z")[:3] + ":" + stamp.strftime("%z")[3:]
-        json_stamp = stamp.strftime("%Y-%m-%dT%H:%M:%S.") + f"{stamp.microsecond // 1000:03d}" + stamp.strftime("%z")[:3] + ":" + stamp.strftime("%z")[3:]
+        db_stamp, json_stamp = self._stamps()
         used = {r["ID"] for r in self._sql('select "ID" from "djmdCue"').mappings().all()}
         new_uuids: dict[str, str] = {}
-        created, entries = [], []
+        rows = []
 
         for cue_id in cue_ids:
             (source,) = self._rows("djmdCue", "ID", cue_id)
@@ -226,40 +278,40 @@ class PyrekordboxWriter:
             if str(source["ContentID"]) != str(from_content_id):
                 raise DatabaseError(f"Cue {cue_id} doesn't belong to track {from_content_id}.")
 
-            new_id = str(uuid.uuid4().int % 4_000_000_000)
-
-            while new_id in used:
-                new_id = str(uuid.uuid4().int % 4_000_000_000)
-
-            used.add(new_id)
             # A hot cue and its memory cue share one UUID in Rekordbox, so their copies do too.
             new_uuid = new_uuids.setdefault(source["UUID"], str(uuid.uuid4()))
-            row = {
-                **source, "ID": new_id, "ContentID": to_content_id, "ContentUUID": target[0]["UUID"], "UUID": new_uuid,
-                "created_at": db_stamp, "updated_at": db_stamp,
-            }
-            self._insert("djmdCue", row)
-            created.append(new_id)
-            entries.append({k: (json_stamp if k in ("created_at", "updated_at") else row.get(k)) for k in self._CUE_JSON_FIELDS})
-
-        existing = self._rows("contentCue", "ContentID", to_content_id)
-
-        if existing:
-            previous = existing[0]["Cues"]
-            merged = json.loads(previous or "[]") + entries
-            self._sql('update "contentCue" set "Cues" = :c where "ID" = :i', c=json.dumps(merged, separators=(",", ":")), i=existing[0]["ID"])
-            token = {"cueIds": created, "contentCue": {"previous": previous, "id": existing[0]["ID"]}}
-        else:
-            row_id = str(uuid.uuid4())
-            self._insert("contentCue", {
-                "ID": row_id, "ContentID": to_content_id, "Cues": json.dumps(entries, separators=(",", ":")),
-                "rb_cue_count": None, "UUID": str(uuid.uuid4()), "rb_data_status": 0, "rb_local_data_status": 0,
-                "rb_local_deleted": 0, "rb_local_synced": 0, "usn": None, "rb_local_usn": None,
-                "created_at": db_stamp, "updated_at": db_stamp,
+            rows.append({
+                **source, "ID": self._unused_cue_id(used), "ContentID": to_content_id, "ContentUUID": target[0]["UUID"],
+                "UUID": new_uuid, "created_at": db_stamp, "updated_at": db_stamp,
             })
-            token = {"cueIds": created, "contentCue": {"created": row_id}}
 
-        return token
+        return self._store_cues(to_content_id, rows, json_stamp)
+
+    def add_cues(self, content_id: str, cues: list[tuple[int, int]]) -> dict:
+        """Add plain cues, each given as (kind, position in ms), shaped like the ones Rekordbox itself saves."""
+        import uuid
+
+        target = self._rows("djmdContent", "ID", content_id)
+
+        if len(target) != 1:
+            raise DatabaseError(f"Track {content_id} is not in the database.")
+
+        db_stamp, json_stamp = self._stamps()
+        used = {r["ID"] for r in self._sql('select "ID" from "djmdCue"').mappings().all()}
+        rows = [
+            {
+                "ID": self._unused_cue_id(used), "ContentID": content_id, "InMsec": ms, "InFrame": int(ms * 0.15),
+                "InMpegFrame": 0, "InMpegAbs": 0, "OutMsec": -1, "OutFrame": 0, "OutMpegFrame": 0, "OutMpegAbs": 0,
+                "Kind": kind, "Color": -1, "ColorTableIndex": 0 if kind else None, "ActiveLoop": None, "Comment": None,
+                "BeatLoopSize": None, "CueMicrosec": None, "InPointSeekInfo": None, "OutPointSeekInfo": None,
+                "ContentUUID": target[0]["UUID"], "UUID": str(uuid.uuid4()), "rb_data_status": 0,
+                "rb_local_data_status": 0, "rb_local_deleted": 0, "rb_local_synced": 0, "usn": None,
+                "rb_local_usn": None, "created_at": db_stamp, "updated_at": db_stamp,
+            }
+            for kind, ms in cues
+        ]
+
+        return self._store_cues(content_id, rows, json_stamp)
 
     def remove_copied_cues(self, to_content_id: str, token: dict) -> None:
         for cue_id in token["cueIds"]:
@@ -270,7 +322,10 @@ class PyrekordboxWriter:
         if "created" in info:
             self._sql('delete from "contentCue" where "ID" = :i', i=info["created"])
         else:
-            self._sql('update "contentCue" set "Cues" = :c where "ID" = :i', c=info["previous"], i=info["id"])
+            self._sql(
+                'update "contentCue" set "Cues" = :c, "rb_cue_count" = :n where "ID" = :i',
+                c=info["previous"], n=info.get("previousCount"), i=info["id"],
+            )
 
     def create_playlist(self, name: str) -> str:
         return str(self._db.create_playlist(name).ID)
@@ -401,6 +456,40 @@ def _require_rekordbox_closed() -> None:
 
 def cuebridge_home() -> Path:
     return Path(os.environ.get("CUEBRIDGE_HOME") or Path.home() / ".cuebridge")
+
+
+EXPORT_STALE_AFTER = timedelta(minutes=5)  # how much newer the database may be than an export before the export is doubted
+
+
+def database_modified(db_path: Path) -> datetime | None:
+    """When the database (or its write-ahead log) last changed, or None if neither file is there."""
+    times = [db_path.with_name(n).stat().st_mtime for n in ("master.db", "master.db-wal") if db_path.with_name(n).exists()]
+
+    return datetime.fromtimestamp(max(times)) if times else None
+
+
+def stale_export_message(xml_path: Path, db_path: Path | None = None) -> str | None:
+    """Why a Rekordbox XML export can't be trusted any more, or None if it is as new as the database.
+
+    The XML is a snapshot; Rekordbox's database moves on every time it is used. Planning from an
+    old snapshot gives wrong answers (tracks and cues it doesn't know about). If the database
+    can't be found there is nothing to compare with, so the export is taken as it is.
+    """
+    try:
+        db_path = db_path or find_database()
+        changed = database_modified(db_path)
+        exported = datetime.fromtimestamp(Path(xml_path).stat().st_mtime)
+    except (OSError, LibraryError):
+        return None
+
+    if changed is None or changed - exported <= EXPORT_STALE_AFTER:
+        return None
+
+    return (
+        f"The Rekordbox export {Path(xml_path).name} was made {exported:%Y-%m-%d %H:%M}, but Rekordbox's database "
+        f"changed {changed:%Y-%m-%d %H:%M}. In Rekordbox choose File > Export Collection in xml format over it, "
+        "then load it again."
+    )
 
 
 def copy_database(db_path: Path, destination: Path) -> Path:

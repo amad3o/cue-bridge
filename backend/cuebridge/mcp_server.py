@@ -16,7 +16,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cuebridge.services import drift, library_queries, library_reports, playlist_export, rekordbox_db, rekordbox_editor, serato_sync, sync_check, db_library
+from cuebridge.services import drift, library_queries, library_reports, playlist_export, rekordbox_cue_writes, rekordbox_db, rekordbox_editor, serato_sync, sync_check, db_library
 from cuebridge.parsers.apple_music_xml import MusicLibrary
 from cuebridge.services import apple_music_live
 from cuebridge.services import rekordbox_service
@@ -35,10 +35,10 @@ mcp = MCPServer(
         "Call load_rekordbox_library first with the path to the XML file. Tools "
         "return summaries and pages of results, so use limit and offset to see "
         "more. The writing tools (set_default_cue and "
-        "duplicate_memory_cues_to_hot_cues) edit the loaded XML file itself, "
-        "after saving a backup of a fresh Rekordbox export. They default to a "
-        "dry run: always show the user what would change, and get their "
-        "go-ahead, before calling them with dry_run=false. "
+        "duplicate_memory_cues_to_hot_cues) edit Rekordbox's database, which "
+        "must be closed. They default to a dry run: always show the user what "
+        "would change, and get their go-ahead, before calling them with "
+        "dry_run=false and expected_cues from the dry run. "
         "sync_cues_to_serato goes further and edits the user's audio files: "
         "Serato DJ Pro must be closed, and dry_run=false needs expected_files "
         "from the dry run. undo_serato_sync reverses it."
@@ -368,6 +368,7 @@ def export_playlists_for_rekordbox(
     output_path: str | None = None,
     folder_name: str = "Apple Music",
     dry_run: bool = True,
+    allow_stale_export: bool = False,
 ) -> dict:
     """Add Apple Music playlists to the Rekordbox XML, ready to import in one step.
 
@@ -391,6 +392,11 @@ def export_playlists_for_rekordbox(
     small .xml file instead and leave the Rekordbox export alone. Rekordbox's own
     database is never touched.
 
+    The loaded export is refused if Rekordbox's database has changed since it
+    was made (more than five minutes newer), because a plan built on an old
+    export is wrong. Ask the user to export again (File > Export Collection in
+    xml format) and load it again. `allow_stale_export=true` overrides that.
+
     Run it with dry_run=true first and show the user the summary.
 
     To import (steps for the user): in Rekordbox, with Preferences > Advanced >
@@ -400,6 +406,11 @@ def export_playlists_for_rekordbox(
     already exists adds a copy or merges has not been tested.
     """
     rekordbox, music = _require_library(), _require_apple_library()
+    stale = None if allow_stale_export else rekordbox_db.stale_export_message(rekordbox.path)
+
+    if stale:
+        raise ToolError(stale + " (Or pass allow_stale_export=true to use it anyway.)")
+
     result = _drift()
     plan = playlist_export.plan_export(rekordbox, music, result, names=playlists, all_playlists=all_playlists)
     in_place = output_path is None
@@ -1016,9 +1027,7 @@ def check_sync_status(
         db_path = _db_target(database_path)
         inputs.database_path = db_path
         inputs.snapshot = rekordbox_db.read_snapshot(db_path, rekordbox_db.default_backend())
-        inputs.database_modified = datetime.fromtimestamp(
-            max(db_path.with_name(n).stat().st_mtime for n in ("master.db", "master.db-wal") if db_path.with_name(n).exists())
-        )
+        inputs.database_modified = rekordbox_db.database_modified(db_path)
     except Exception as error:  # a missing database, SQLCipher not set up, a locked file...
         inputs.snapshot, inputs.snapshot_error = None, str(error)
 
@@ -1076,56 +1085,63 @@ def find_tracks_without_cues(limit: int = 25, offset: int = 0) -> dict:
     return library_queries.search_tracks(_require_library(), has_cues=False, limit=limit, offset=offset)
 
 
-def _edit_result(plan, dry_run: bool) -> dict:
-    """Fields every writing tool reports about what file it changes."""
-    t = plan.target
-
+def _cue_write_tool(
+    plan_function,
+    what: str,
+    dry_run: bool,
+    expected_cues: int | None,
+    playlisted_only: bool,
+    database_path: str | None,
+) -> dict:
+    """The shared flow of the two cue-writing tools: plan, report, and (when asked) apply and verify."""
+    db_path = _db_target(database_path)
+    backend = rekordbox_db.default_backend()
+    snapshot = rekordbox_db.read_snapshot(db_path, backend)
+    plan = plan_function(snapshot, playlisted_only)
+    running = rekordbox_db.rekordbox_running()
     result = {
         "dryRun": dry_run,
-        "file": str(t.target),
-        "mode": "edits the loaded file in place" if t.in_place else "saves an edited copy elsewhere",
+        "database": str(db_path),
+        "rekordboxIsRunning": running,
+        "tracksToChange": len(plan.additions),
+        "cuesToAdd": plan.cue_count,
+        "alreadyDone": plan.already_done,
+        "playlistedTracksOnly": playlisted_only,
+        "tracksSkippedForBeingInNoPlaylist": plan.not_playlisted,
+        "examples": [
+            {"track": a.title, "artist": a.artist, "cues": [{"slot": "ABCDEFGH"[db_library.HOT_CUE_SLOTS[k]], "positionMs": ms} for k, ms in a.cues]}
+            for a in plan.additions[:10]
+        ],
+        "memoryCuesWithNoFreeSlot": sum(n for _, n in plan.no_free_slot),
+        "tracksWithNoFreeSlot": [{"track": t, "memoryCuesSkipped": n} for t, n in plan.no_free_slot[:10]],
+        "tracksSkippedForUnreadableCues": plan.skipped_unreadable[:10],
     }
 
-    if t.in_place:
-        result["backupFirst"] = rekordbox_editor.needs_backup(plan)
-    else:
-        result["sourceFile"] = str(t.source)
-
-    return result
-
-
-def _finish_edit(plan, result: dict, changed: int, what: str, dry_run: bool) -> dict:
-    """Fill in the summary, and save the XML unless this is a dry run."""
-    t = plan.target
-
-    if changed == 0:
-        result["summary"] = "Nothing to do for this edit, and no file was written."
+    if not plan.additions:
+        result["summary"] = "Nothing to do: no cues need adding, and nothing was written."
         return result
 
     if dry_run:
-        if t.in_place:
-            backup = " A backup of the current file would be saved next to it first." if result["backupFirst"] else ""
-            result["summary"] = (
-                f"Would {what} by editing {t.target} in place.{backup} Nothing has been written."
-            )
-        else:
-            result["summary"] = (
-                f"Would {what} and save the result to {t.target}. "
-                f"{t.source.name} would not be modified. Nothing has been written."
-            )
+        result["summary"] = (
+            f"Would {what}: {plan.cue_count} cue(s) on {len(plan.additions)} track(s), written to Rekordbox's database. "
+            "Nothing has been written." + (" Quit Rekordbox before applying." if running else "")
+        )
         return result
 
-    written = rekordbox_editor.write_plan(plan)
-    result["file"] = str(written.path)
-    result["backup"] = str(written.backup) if written.backup else None
+    if expected_cues != plan.cue_count:
+        raise ToolError(
+            f"This would add {plan.cue_count} cues, but expected_cues was {expected_cues!r}. "
+            "Run a dry run, show the user the numbers, and pass the count."
+        )
 
-    if t.in_place:
-        saved = f"Did {what} by editing {written.path} in place."
-        saved += f" The previous file was backed up to {written.backup}." if written.backup else ""
-    else:
-        saved = f"Did {what} and saved the result to {written.path}. {t.source.name} was not modified."
-
-    result["summary"] = saved + " Load the file again to see the changes."
+    outcome = rekordbox_cue_writes.apply_cue_plan(plan, db_path, backend, lambda s: plan_function(s, playlisted_only))
+    result["backup"] = str(outcome.backup)
+    result["journal"] = str(outcome.journal)
+    result["summary"] = (
+        f"Did {what}: added {plan.cue_count} cue(s) to {len(plan.additions)} track(s) and verified the database. "
+        f"Backup: {outcome.backup}. To reverse this, call undo_rekordbox_cue_additions (journal: {outcome.journal}). "
+        "You can open Rekordbox now."
+    )
     return result
 
 
@@ -1135,43 +1151,32 @@ def _finish_edit(plan, result: dict, changed: int, what: str, dry_run: bool) -> 
     )
 )
 @_translate_errors
-def set_default_cue(output_path: str | None = None, dry_run: bool = True) -> dict:
-    """Add a hot cue A at 0:00 to every track that has no cue or loop.
+def set_default_cue(
+    dry_run: bool = True,
+    expected_cues: int | None = None,
+    playlisted_only: bool = True,
+    database_path: str | None = None,
+) -> dict:
+    """Add a hot cue A at 0:00 to every playlisted track that has no cue or loop.
 
-    By default this edits the loaded Rekordbox XML file itself, in place. If
-    a timestamped backup is saved next to it first. Only the new cue lines are
-    inserted, so the rest of the file stays exactly as Rekordbox wrote it. The
-    write is atomic, and it is refused if the file changed since the dry run
-    (for example after a re-export). Running it again changes nothing, and other
-    writing tools build on the same file, so their edits add up.
+    This edits Rekordbox's own database (master.db), so be careful. Only tracks
+    that are in at least one real playlist are touched by default
+    (`playlisted_only`), because the collection also holds thousands of
+    sample-pack files nobody plays from a playlist. Tracks that already have any
+    cue or loop are left alone, so running it again changes nothing.
 
-    `dry_run` is true by default and only reports what would change. Show the
-    user that summary, including that the file would be edited in place, and get
-    their go-ahead before calling again with dry_run=false. `output_path`
-    (optional, must end in .xml, must not exist yet) saves the edited XML there
-    instead and leaves the loaded file alone.
+    - Call it with dry_run=true first (the default). Rekordbox may be open for
+      that. Show the user the number of tracks and a few examples.
+    - Rekordbox must be closed to write. Then call with dry_run=false and
+      expected_cues set to the count from the dry run.
+    - A backup, read-back verification (restoring the backup on any difference)
+      and a journal work as in the other database tools; undo_rekordbox_cue_additions
+      reverses it.
     """
-    library = _require_library()
-    plan = rekordbox_editor.build_default_cue_plan(library.path, output_path=output_path)
-
-    count = len(plan.changed_track_ids)
-    by_id = library.tracks_by_id
-
-    result = _edit_result(plan, dry_run)
-    result.update(
-        {
-            "cueAdded": "hot cue A at 0:00.000",
-            "tracksToChange": count,
-            "tracksSkippedBecauseTheyHaveCues": plan.skipped_with_cues,
-            "examples": [
-                library_queries.track_to_summary(by_id[i])
-                for i in plan.changed_track_ids[:10]
-                if i in by_id
-            ],
-        }
+    return _cue_write_tool(
+        rekordbox_cue_writes.plan_default_cues, "add a hot cue A at 0:00 to the tracks with no cues",
+        dry_run, expected_cues, playlisted_only, database_path,
     )
-
-    return _finish_edit(plan, result, count, f"add a hot cue A at 0:00 to {count} tracks", dry_run)
 
 
 @mcp.tool(
@@ -1180,55 +1185,61 @@ def set_default_cue(output_path: str | None = None, dry_run: bool = True) -> dic
     )
 )
 @_translate_errors
-def duplicate_memory_cues_to_hot_cues(output_path: str | None = None, dry_run: bool = True) -> dict:
-    """Copy every memory cue to a hot cue at the same position.
+def duplicate_memory_cues_to_hot_cues(
+    dry_run: bool = True,
+    expected_cues: int | None = None,
+    playlisted_only: bool = True,
+    database_path: str | None = None,
+) -> dict:
+    """Copy every memory cue to a hot cue at the same position, in Rekordbox's database.
 
     The memory cues stay. Each one gets a duplicate hot cue in the lowest free
     slot (A-H, i.e. 8 slots), in time order. Slots already used by hot cues or
     hot loops are never reused, a memory cue is skipped if a hot cue is already
     at the exact same time (so running this again changes nothing), and any
-    memory cue beyond the 8 slots is reported as overflow and not copied.
+    memory cue beyond the 8 slots is reported as overflow and not copied. A
+    track with a cue in a slot CueBridge can't read is skipped and reported.
+    Only playlisted tracks are touched by default (`playlisted_only`).
 
-    By default this edits the loaded Rekordbox XML file itself, in place, with
-    the same safeguards as set_default_cue: a timestamped backup first, only the
-    new cue lines inserted, an atomic write, and a refusal if the file changed
-    since the dry run.
-
-    `dry_run` is true by default and only reports what would change. Show the
-    user that summary, including that the file would be edited in place, and get
-    their go-ahead before calling again with dry_run=false. `output_path`
-    (optional, must end in .xml, must not exist yet) saves the edited XML there
-    instead and leaves the loaded file alone.
+    This edits master.db, with the same steps as set_default_cue: dry run first
+    (Rekordbox may be open), then Rekordbox closed and dry_run=false with
+    expected_cues set to the count from the dry run. A backup, read-back
+    verification and a journal are included; undo_rekordbox_cue_additions
+    reverses it.
     """
-    library = _require_library()
-    plan = rekordbox_editor.build_hot_cue_duplication_plan(library.path, output_path=output_path)
-
-    count = len(plan.changed_track_ids)
-    by_id = library.tracks_by_id
-
-    result = _edit_result(plan, dry_run)
-    result.update(
-        {
-            "hotCuesToAdd": plan.cues_added,
-            "tracksToChange": count,
-            "memoryCuesAlreadyHavingAHotCue": plan.already_duplicated,
-            "memoryCuesWithNoFreeSlot": sum(n for _, n in plan.overflow),
-            "tracksWithNoFreeSlot": [
-                {**library_queries.track_to_summary(by_id[i]), "memoryCuesSkipped": n}
-                for i, n in plan.overflow[:10]
-                if i in by_id
-            ],
-            "examples": [
-                library_queries.track_to_summary(by_id[i])
-                for i in plan.changed_track_ids[:10]
-                if i in by_id
-            ],
-        }
+    return _cue_write_tool(
+        rekordbox_cue_writes.plan_memory_to_hot_cues, "copy memory cues to hot cues",
+        dry_run, expected_cues, playlisted_only, database_path,
     )
 
-    return _finish_edit(
-        plan, result, count, f"add {plan.cues_added} hot cues to {count} tracks", dry_run
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
     )
+)
+@_translate_errors
+def undo_rekordbox_cue_additions(journal: str | None = None, dry_run: bool = True) -> dict:
+    """Reverse set_default_cue or duplicate_memory_cues_to_hot_cues: take the cues they added off again.
+
+    `journal` is the path the tool reported; the most recent cue journal is used
+    if omitted. Cues that are already gone are skipped. Rekordbox must be closed
+    unless this is a dry run.
+    """
+    path = Path(journal).expanduser() if journal else rekordbox_db.latest_journal(prefix=rekordbox_cue_writes.CUE_JOURNALS)
+
+    if path is None or not path.is_file():
+        raise ToolError("No cue journal found. Pass the journal path from set_default_cue or duplicate_memory_cues_to_hot_cues.")
+
+    outcome = rekordbox_cue_writes.undo_cue_additions(path, rekordbox_db.default_backend(), dry_run=dry_run)
+
+    return {
+        "dryRun": dry_run,
+        "journal": str(path),
+        "undone" if not dry_run else "wouldUndo": outcome.removed,
+        "skipped": [{"item": e, "why": why} for e, why in outcome.skipped],
+        "summary": f"{'Would undo' if dry_run else 'Undid'} {len(outcome.removed)} change(s); {len(outcome.skipped)} skipped.",
+    }
 
 
 @dataclass

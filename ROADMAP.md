@@ -21,12 +21,12 @@ The loop that was the goal now works end to end with no manual export:
 
 ## Completed
 
-**MCP server** (`cuebridge/mcp_server.py`, stdio, `mcp` 2.x; registered in Claude Code). 24 tools, all returning compact, paginated output. The tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
+**MCP server** (`cuebridge/mcp_server.py`, stdio, `mcp` 2.x; registered in Claude Code). 25 tools, all returning compact, paginated output. The tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
 
 | Area                 | Tools                                                                                                                                                                                                                                  |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Rekordbox XML, read  | `load_rekordbox_library`, `search_tracks`, `get_track_cues`, `find_tracks_without_cues`                                                                                                                                                |
-| Rekordbox XML, write | `set_default_cue`, `duplicate_memory_cues_to_hot_cues` (see known issue 2)                                                                                                                                                             |
+| Rekordbox cues, write | `set_default_cue`, `duplicate_memory_cues_to_hot_cues`, `undo_rekordbox_cue_additions` (database)                                                                                                                                     |
 | Serato               | `sync_cues_to_serato`, `undo_serato_sync`                                                                                                                                                                                              |
 | Apple Music          | `load_apple_music_library` (live from the Music app, or an exported XML), `get_playlist_tracks`                                                                                                                                        |
 | Compare              | `compare_libraries`, `list_library_differences`, `find_missing_files`                                                                                                                                                                  |
@@ -45,7 +45,7 @@ The loop that was the goal now works end to end with no manual export:
 - `check_sync_status` (`sync_check.py`): one read-only report across Apple Music, Rekordbox and Serato, with each part reported as not checkable instead of failing.
 - The Rekordbox XML is edited as text (new lines only, original bytes untouched) for the playlist export, because Rekordbox rejects an XML library's rewrite of its file.
 - Pydantic models, root `.gitignore`, README rewritten around the MCP server.
-- 715 pytest tests (a shared fixture keeps every test away from the real Rekordbox database): parsers, services, the Serato codecs and sync on mutagen-built files, the XML patcher, the database logic against a fake database (with mutation checks on the safeguards), and the tools, directly and through an in-memory MCP client.
+- 705 pytest tests (a shared fixture keeps every test away from the real Rekordbox database): parsers, services, the Serato codecs and sync on mutagen-built files, the XML patcher, the database logic against a fake database (with mutation checks on the safeguards), and the tools, directly and through an in-memory MCP client.
 
 **Web UI (prototype, on hold)**
 
@@ -54,7 +54,7 @@ The loop that was the goal now works end to end with no manual export:
 ## Known issues
 
 1. **Housekeeping.** `requirements.txt` doesn't pin a Python version. There is no CI or lint.
-2. ~~The two Rekordbox XML edit tools re-serialised the XML.~~ Fixed: they now insert the new cue lines as text and keep every other byte (no marker comment). Every in-place edit now makes a backup, and a copy is never saved over an existing file. Rekordbox accepting an edited export is still unverified (see "Not yet verified").
+2. ~~The two Rekordbox XML edit tools re-serialised the XML.~~ Gone: both now write to the database (2026-11-18, section 9), and the XML cue-editing code and its tests were deleted. `rekordbox_editor.py` keeps only the safe-write layer the playlist export uses.
 3. ~~Rekordbox tracks pointing at renamed files.~~ Repaired on the live database on 2026-11-05: 1 track repointed, 56 stale duplicate rows removed (51 with nothing the twin lacked, then 5 after their cues were copied to the twin). 20 tracks remain whose file is missing and not in Apple Music; they need a decision from the user (remove them in Rekordbox or find the files). Rekordbox opening the result is still to be confirmed.
 4. ~~A Rekordbox export is needed for cues.~~ Fixed: cues, beat grids and track lengths are read from the live database (`db_library.py`), checked against an XML export on the real library (45 of 46 tracks identical, colours included; the rest were stale rows and one cue moved after the export). Hot cue slots A to H and 17 colour indexes are verified (from a test track on 2026-11-06: database index paired with the RGB in a fresh XML export); loops, kind 4 and any other colour are left out and reported.
 5. **Rekordbox can only create a playlist from an XML import, never update one.** That is why updating an existing playlist goes through the database. An XML import of `r&b` made a second `r&b` in a new "Apple Music" folder.
@@ -75,7 +75,7 @@ backend/cuebridge/
     serato_markers.py (both codecs), serato_tags.py (read, locate, beat grid)
   services/              path-based logic
     rekordbox_service.py (validate, cache, pending-playlist note), library_queries.py,
-    rekordbox_editor.py (XML edits), cue_rules.py, cue_timing.py,
+    rekordbox_editor.py (safe XML writing), rekordbox_cue_writes.py (cues to the database), cue_rules.py, cue_timing.py,
     serato_sync.py, apple_music_service.py, apple_music_live.py,
     track_matcher.py, drift.py, library_reports.py,
     playlist_export.py (XML patcher), rekordbox_db.py (database)
@@ -85,9 +85,9 @@ backend/cuebridge/
 ### 2. Rekordbox XML tools
 
 - [x] Read tools, with a library cache keyed on path, mtime and size.
-- [x] `set_default_cue` and `duplicate_memory_cues_to_hot_cues`: dry run by default, a verified backup of a fresh export, atomic writes, refusal if the file changed since planning. (On the real library the second adds 129 hot cues to 47 tracks, at most 5 per track.)
-- [x] **Moved both to text patching** (`patch_marks`), marker comment dropped, side-file note kept in step with the file.
-- [ ] Optional filters for `set_default_cue`, such as skipping very short tracks. A real export includes Pioneer sampler one-shots (`NOISE`, `SINEWAVE`), which get a cue too.
+- [x] `set_default_cue` and `duplicate_memory_cues_to_hot_cues` moved to the database (2026-11-18): dry run, `expected_cues`, Rekordbox closed, backup, read-back verification, journal, `undo_rekordbox_cue_additions`. Playlisted tracks only by default (7,096 of the collection's tracks have no cue, 5,602 of them are in no playlist). Tried on a copy of the real database: 2 memory-to-hot cues applied, found nothing to do on a second plan, and undid exactly.
+- [x] The XML versions and `patch_marks` were removed.
+- [ ] Optional filters for `set_default_cue`, such as skipping very short tracks (playlisted-only already keeps the sample-pack one-shots out).
 - [ ] Claude Desktop registration is described in the README but untested.
 
 ### 3. Serato support
@@ -177,9 +177,9 @@ The database reader sees every track, playlist, cue and beat grid in the live co
 - [x] Read tracks, cues and the first beat from `master.db` into `Track` / `Cue` (`db_library.py`); `sync_cues_to_serato` and `check_sync_status` use it, with the XML as a fallback (`cue_source`).
 - [x] Hot cues F to H are kinds 7, 8 and 9, and 17 colour indexes are confirmed (41, 1, 5, 9, 14, 18, 22, 26, 30, 32, 38, 42, 45, 49, 56, 60, 62).
 - [x] Loops and colours verified (2026-11-18, test tracks Sex and Knockin): a hot loop on pad H is Kind 9 with `OutMsec` set and colour index 0 (the XML shows it as Type 4, orange, start 1 ms earlier from rounding); all 16 palette colours were already in `COLOR_TABLE`, and the database and the XML agree on every cue of both tracks. Memory loops and loops on other pads are still unchecked. The whole live library reads with no unknown colour and no left-out cue.
-- [ ] Still XML-only: `set_default_cue`, `duplicate_memory_cues_to_hot_cues`, and the XML playlist export.
+- [ ] Still XML-only: the XML playlist export (it can't move: new tracks need Rekordbox's own import). It now refuses an export older than the database (`allow_stale_export` overrides).
 - [ ] Let `load_rekordbox_library` take the database as a source (`path` omitted), keeping the XML as an option. (`search_tracks`, `get_track_cues` and `find_tracks_without_cues` still read the loaded XML.)
-- [ ] Decide what replaces `set_default_cue` and `duplicate_memory_cues_to_hot_cues`: database writes with the same safeguards, or text-patched XML (known issue 2). Rekordbox must be closed for database writes.
+- [x] Decided: database writes with the same safeguards (`rekordbox_cue_writes.py`).
 - [ ] Rekordbox's own "auto export collection" setting was found disabled (`CollectionAutoExportEnable`, path `~/Dropbox/rekordbox/xml`) and was enabled by the user; check whether it writes an XML by itself, which would be a simpler route.
 
 ### 10. Our own agent (instead of relying on Claude Code)
@@ -272,7 +272,7 @@ Built and tested in code, but never checked in the real application. Most need t
 
 - [ ] **Rekordbox after the database cleanup.** Opening cleanly, the copied cues on Style, Exonym, Simple City, Sun Dog and Web Harvest, and the 51 + 5 removed rows being gone (the user opens Rekordbox and checks).
 - [ ] **Database cue numbering** for memory loops, loops on pads other than H, and kind 4 (hot loop on H and all 16 palette colours are confirmed).
-- [ ] **Rekordbox accepting a cue-edited XML** from `set_default_cue` and `duplicate_memory_cues_to_hot_cues` (now text-patched; known issue 2).
+- [ ] **Rekordbox opening a database with cues added by `set_default_cue` or `duplicate_memory_cues_to_hot_cues`** (rows modelled on ones Rekordbox saved, tried on a copy, never on the live database yet). Also the five tracks `copy_cues` wrote to before it left empty JSON fields out.
 - [ ] **Whether Rekordbox cloud / library sync** is affected by direct database edits (not known whether it is used).
 - [ ] **An MP3 synced to Serato and opened there**, and **colors and cue positions against Rekordbox** by ear on a few more tracks. The 5.5 ms MP3 offset was fitted on Lexicon-synced pairs from one library (matching 95 cues to within 1 ms).
 - [ ] **Sex, Smokin and Glue** (beat-grid-estimated MP3 timing), and what makes some of those files one frame off and others two.
@@ -293,7 +293,7 @@ Where we paused (2026-11-06): the library is fully in sync (Apple Music, Rekordb
 1. ~~Loops and other colours~~ Done 2026-11-18 (see section 9). Optional: a memory loop and a loop on another pad.
 2. ~~Other colours~~ The palette has 16 colours and all are confirmed.
 3. **`.aif` cues.** One playlisted track is skipped because the Serato writer doesn't handle AIFF.
-4. **Drop the XML for the playlist export.** `export_playlists_for_rekordbox` and the two XML edit tools still need a fresh export (a stale one caused a detour today). Move them to the database or drop them.
+4. ~~Drop the XML for the cue tools~~ Done 2026-11-18. The playlist export stays on XML (a stale-export guard was added).
 5. Then the cue comparison (section 4), the housekeeping (known issue 1: pin the Python version, add CI and lint) and the metadata reports (section 8).
 6. **Our own agent** (section 10): pick the SDK or raw API, then a terminal loop with our own dry-run approval step.
 

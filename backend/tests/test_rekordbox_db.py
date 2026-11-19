@@ -60,6 +60,16 @@ class FakeWriter:
 
         return {"cueIds": made}
 
+    def add_cues(self, content_id, cues):
+        made = []
+
+        for kind, ms in cues:
+            self.counter += 1
+            made.append(f"added-{self.backend.runs}-{self.counter}")
+            self.state.setdefault("cues", []).append([content_id, kind, ms, made[-1]])
+
+        return {"cueIds": made}
+
     def remove_copied_cues(self, to_id, token):
         self.state["cues"] = [c for c in self.state["cues"] if not (c[0] == to_id and c[3] in token["cueIds"])]
 
@@ -79,6 +89,9 @@ class FakeWriter:
     def commit(self):
         if self.backend.tamper:
             self.state["playlists"][0]["songs"].clear()  # damage something that was not part of the plan
+
+        if getattr(self.backend, "tamper_contents", False):
+            self.state["contents"].pop()  # a track that was not part of the plan disappears
 
         if getattr(self.backend, "tamper_cues", False):
             self.state.setdefault("cues", []).append(["c1", 1, 123, "stray"])  # a cue nobody planned
