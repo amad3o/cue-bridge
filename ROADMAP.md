@@ -131,6 +131,7 @@ backend/cuebridge/
 - [x] CI (`.github/workflows/ci.yml`), lint (ruff: E, F, W, I; line length 160) and a one-command dev setup (`make setup`).
 - [x] Python version: developed on 3.13 (`.python-version`), supported 3.10 to 3.14 (all 738 tests pass on each).
 - ~~Packaging for local install (`pipx` or `uvx`).~~ Not needed for a personal tool.
+- [ ] **Remove the front end.** The prototype UI is on hold and the scope note says there are no plans for a standalone UI, so delete it rather than carry it. Remove `frontend/` (React app, including its `node_modules` and the stray `venv`), `backend/cuebridge/web/` (the FastAPI upload app) and `backend/tests/test_upload_endpoint.py`. Then drop what only they used from `requirements.txt` (check each first: `fastapi`, `uvicorn` and `python-multipart` may be needed by `mcp` itself or by nothing else), take the UI and `web/main.py` mentions out of the README and the layout in section 1, and delete the "Web UI (prototype, on hold)" block, known issue 6 and section 7 from this file. Mentions of the UI in section 10 (entry point) and in the scope note should then say there is no UI. Git history keeps the code if it is ever wanted again.
 
 ### 7. Optional review UI (lowest priority)
 
