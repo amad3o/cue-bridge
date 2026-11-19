@@ -1,14 +1,14 @@
 import pytest
-from mcp.server.mcpserver.exceptions import ToolError
-
 from apple_helpers import library_bytes, music_track, playlist, write_library
+from mcp.server.mcpserver.exceptions import ToolError
+from test_apple_music import rb
+
 from cuebridge import mcp_server as server
 from cuebridge.parsers.apple_music_xml import parse_apple_music_plist
 from cuebridge.parsers.rekordbox_parser import parse_rekordbox_playlists
 from cuebridge.services import apple_music_service, drift
 from cuebridge.services.rekordbox_service import clear_cache, get_rekordbox_library
 from cuebridge.services.track_matcher import AppleMusicIndex
-from test_apple_music import rb
 
 
 def rb_xml(tracks: str, playlists: str) -> bytes:

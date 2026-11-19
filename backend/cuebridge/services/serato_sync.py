@@ -30,10 +30,10 @@ from pathlib import Path
 
 from cuebridge.models import Track
 from cuebridge.parsers.serato_markers import (
-    CueEntry,
-    MarkersError,
     DESCRIPTION,
     LEGACY_DESCRIPTION,
+    CueEntry,
+    MarkersError,
     decode_markers2,
     encode_legacy,
     encode_markers2,

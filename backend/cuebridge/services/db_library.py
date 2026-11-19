@@ -19,7 +19,6 @@ How the database stores a cue (`djmdCue`):
 The first beat comes from the beat grid in the track's analysis file.
 """
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable

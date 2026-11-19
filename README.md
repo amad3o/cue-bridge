@@ -20,7 +20,14 @@ Not built yet: reading loops from Rekordbox's database (hot cues A to H and 17 c
 
 ## Setup
 
-Requires Python 3.10 or newer (the dependencies' minimum). Only tested on 3.13.
+Requires Python 3.10 or newer. The tests run on 3.10 to 3.14 (checked locally and in CI); development is on 3.13 (see `.python-version`).
+
+```bash
+make setup      # creates backend/.venv and installs the dependencies and dev tools
+make check      # ruff, then the tests (what CI runs); `make test` and `make lint` run one each
+```
+
+Or by hand:
 
 ```bash
 cd backend
@@ -29,6 +36,8 @@ source .venv/bin/activate
 pip install -r requirements-dev.txt
 pytest                      # optional: run the tests
 ```
+
+`make setup-db` also installs the optional Rekordbox database packages (it needs `brew install sqlcipher` first; see [Updating Rekordbox playlists directly](#updating-rekordbox-playlists-directly)).
 
 ### Export your Rekordbox library
 

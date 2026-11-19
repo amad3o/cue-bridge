@@ -1,5 +1,6 @@
 import pytest
 from mutagen.id3 import GEOB, ID3
+from serato_helpers import BPMLOCK, COLOR, make_mp3, make_wav
 
 from cuebridge.parsers import serato_markers as m
 from cuebridge.parsers.serato_markers import CueEntry
@@ -10,7 +11,6 @@ from cuebridge.parsers.serato_tags import (
     read_first_beat,
     read_markers2,
 )
-from serato_helpers import BPMLOCK, COLOR, make_mp3, make_wav
 
 CUES = [CueEntry(0, 235, "#cc0000"), CueEntry(1, 581, "#00cc00", "Drop")]
 ENTRIES = [COLOR, *CUES, BPMLOCK]

@@ -4,11 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-
-from cuebridge.parsers import serato_markers as m
-from cuebridge.parsers.serato_markers import CueEntry, MarkersError
-from cuebridge.parsers.serato_tags import locate_legacy_markers, locate_markers2
-from cuebridge.services import serato_sync as sync
 from serato_helpers import (
     BPMLOCK,
     COLOR,
@@ -20,6 +15,11 @@ from serato_helpers import (
     rb_cue,
     rb_track,
 )
+
+from cuebridge.parsers import serato_markers as m
+from cuebridge.parsers.serato_markers import CueEntry, MarkersError
+from cuebridge.parsers.serato_tags import locate_legacy_markers, locate_markers2
+from cuebridge.services import serato_sync as sync
 
 
 @pytest.fixture(autouse=True)
@@ -107,7 +107,7 @@ def tagged(request, tmp_path):
 
 def outside_both(path: Path) -> bytes:
     data = path.read_bytes()
-    spans = sorted((l.offset, l.length) for l in (locate_markers2(path), locate_legacy_markers(path)))
+    spans = sorted((loc.offset, loc.length) for loc in (locate_markers2(path), locate_legacy_markers(path)))
     kept, position = b"", 0
 
     for offset, length in spans:

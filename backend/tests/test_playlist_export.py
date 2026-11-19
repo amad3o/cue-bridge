@@ -1,20 +1,18 @@
 import hashlib
 import os
-from pathlib import Path
 
 import pytest
+from apple_helpers import library_bytes, music_track, playlist, write_library
 from mcp.server.mcpserver.exceptions import ToolError
+from test_drift import rb_playlist_xml, rb_track_xml, rb_xml
 
-from apple_helpers import music_track, playlist, write_library
 from cuebridge import mcp_server as server
 from cuebridge.parsers.apple_music_xml import parse_apple_music_plist
-from cuebridge.parsers.paths import location_to_path
 from cuebridge.parsers.rekordbox_parser import parse_rekordbox_playlists
-from cuebridge.services import apple_music_service, drift, playlist_export as pe, rekordbox_editor, rekordbox_service
+from cuebridge.services import apple_music_service, drift, rekordbox_editor, rekordbox_service
+from cuebridge.services import playlist_export as pe
 from cuebridge.services.rekordbox_editor import OutputPathError
 from cuebridge.services.rekordbox_service import clear_cache, get_rekordbox_library, parse_rekordbox_bytes
-from test_drift import rb_playlist_xml, rb_track_xml, rb_xml
-from apple_helpers import library_bytes
 
 ON_DISK = {"/Music/a.mp3", "/Music/b.mp3", "/Music/d & co.mp3", "/Music/e.mp3", "/Music/new name.mp3"}
 

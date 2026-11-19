@@ -1,8 +1,8 @@
 import plistlib
 
 import pytest
-
 from apple_helpers import library_bytes, music_track, playlist, write_library
+
 from cuebridge.models import Track
 from cuebridge.parsers.apple_music_xml import AppleMusicParseError, parse_apple_music_plist
 from cuebridge.services import apple_music_service as service

@@ -45,7 +45,7 @@ The loop that was the goal now works end to end with no manual export:
 - `check_sync_status` (`sync_check.py`): one read-only report across Apple Music, Rekordbox and Serato, with each part reported as not checkable instead of failing.
 - The Rekordbox XML is edited as text (new lines only, original bytes untouched) for the playlist export, because Rekordbox rejects an XML library's rewrite of its file.
 - Pydantic models, root `.gitignore`, README rewritten around the MCP server.
-- 738 pytest tests (a shared fixture keeps every test away from the real Rekordbox database): parsers, services, the Serato codecs and sync on mutagen-built files, the XML patcher, the database logic against a fake database (with mutation checks on the safeguards), and the tools, directly and through an in-memory MCP client.
+- 738 pytest tests (ruff clean) (a shared fixture keeps every test away from the real Rekordbox database): parsers, services, the Serato codecs and sync on mutagen-built files, the XML patcher, the database logic against a fake database (with mutation checks on the safeguards), and the tools, directly and through an in-memory MCP client.
 
 **Web UI (prototype, on hold)**
 
@@ -53,7 +53,7 @@ The loop that was the goal now works end to end with no manual export:
 
 ## Known issues
 
-1. **Housekeeping.** `requirements.txt` doesn't pin a Python version. There is no CI or lint.
+1. ~~Housekeeping.~~ Done 2026-11-18: `.python-version` (3.13), `requires-python >=3.10` and ruff config in `backend/pyproject.toml`, a `Makefile` (`make setup`, `make check`), and GitHub Actions CI (ruff and pytest on Python 3.10 to 3.14). The tests pass on all five versions locally. The CI workflow itself hasn't run on GitHub yet.
 2. ~~The two Rekordbox XML edit tools re-serialised the XML.~~ Gone: both now write to the database (2026-11-18, section 9), and the XML cue-editing code and its tests were deleted. `rekordbox_editor.py` keeps only the safe-write layer the playlist export uses.
 3. ~~Rekordbox tracks pointing at renamed files.~~ Repaired on the live database on 2026-11-05: 1 track repointed, 56 stale duplicate rows removed (51 with nothing the twin lacked, then 5 after their cues were copied to the twin). 20 tracks remain whose file is missing and not in Apple Music; they need a decision from the user (remove them in Rekordbox or find the files). Rekordbox opening the result is still to be confirmed.
 4. ~~A Rekordbox export is needed for cues.~~ Fixed: cues, beat grids and track lengths are read from the live database (`db_library.py`), checked against an XML export on the real library (45 of 46 tracks identical, colours included; the rest were stale rows and one cue moved after the export). Hot cue slots A to H and 17 colour indexes are verified (from a test track on 2026-11-06: database index paired with the RGB in a fresh XML export); loops, kind 4 and any other colour are left out and reported.
@@ -128,8 +128,8 @@ backend/cuebridge/
 ### 6. Polish and quality
 
 - [x] README current, including the optional database packages.
-- [ ] Add CI and lint, and a one-command dev setup.
-- [ ] Pin a Python version (tested on 3.13 only; dependencies declare 3.10 or newer).
+- [x] CI (`.github/workflows/ci.yml`), lint (ruff: E, F, W, I; line length 160) and a one-command dev setup (`make setup`).
+- [x] Python version: developed on 3.13 (`.python-version`), supported 3.10 to 3.14 (all 738 tests pass on each).
 - ~~Packaging for local install (`pipx` or `uvx`).~~ Not needed for a personal tool.
 
 ### 7. Optional review UI (lowest priority)
@@ -277,7 +277,7 @@ Built and tested in code, but never checked in the real application. Most need t
 - [ ] **An MP3 synced to Serato and opened there**, and **colors and cue positions against Rekordbox** by ear on a few more tracks. The 5.5 ms MP3 offset was fitted on Lexicon-synced pairs from one library (matching 95 cues to within 1 ms).
 - [ ] **Sex, Smokin and Glue** (beat-grid-estimated MP3 timing), and what makes some of those files one frame off and others two.
 - [ ] **Claude Desktop** registration.
-- [ ] **Other Python versions.**
+- [x] Other Python versions: 3.10 to 3.14 pass the tests locally (the real database and Serato paths were only used on 3.13).
 
 ### Later
 
@@ -294,7 +294,7 @@ Where we paused (2026-11-06): the library is fully in sync (Apple Music, Rekordb
 2. ~~Other colours~~ The palette has 16 colours and all are confirmed.
 3. **`.aif` cues.** One playlisted track is skipped because the Serato writer doesn't handle AIFF.
 4. ~~Drop the XML for the cue tools~~ Done 2026-11-18. The playlist export stays on XML (a stale-export guard was added).
-5. Then the cue comparison (section 4), the housekeeping (known issue 1: pin the Python version, add CI and lint) and the metadata reports (section 8).
+5. ~~The cue comparison and the housekeeping~~ Done 2026-11-18. Next: the metadata reports (section 8).
 6. **Our own agent** (section 10): pick the SDK or raw API, then a terminal loop with our own dry-run approval step.
 
 Left alone on purpose: the Rekordbox-only playlist `Trial playlist - Cloud Library Sync`.

@@ -1,13 +1,13 @@
 from datetime import datetime, timedelta
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from apple_helpers import library_bytes, music_track, playlist, write_library
+
 from cuebridge import mcp_server as server
 from cuebridge.parsers.apple_music_xml import parse_apple_music_plist
-from cuebridge.services import apple_music_service, rekordbox_db as rd, sync_check
+from cuebridge.services import apple_music_service, sync_check
+from cuebridge.services import rekordbox_db as rd
 
 
 def music(tmp_path):
@@ -38,7 +38,9 @@ def snapshot(tmp_path, real, set_ids=("c1", "c2"), warm_ids=("c2",), extra=()):
 
 
 def serato_plan(changes=0, unchanged=3, skipped=0):
-    item = lambda: SimpleNamespace(title="T", artist="X", before=((1, 1000),), after=((1, 2000),))
+    def item():
+        return SimpleNamespace(title="T", artist="X", before=((1, 1000),), after=((1, 2000),))
+
     return SimpleNamespace(
         items=[object()] * (changes + unchanged + skipped), to_change=[item() for _ in range(changes)],
         with_status=lambda s: {"unchanged": [1] * unchanged, "skip": [1] * skipped}.get(s, []),

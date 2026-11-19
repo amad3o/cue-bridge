@@ -1,7 +1,7 @@
 import pytest
+from serato_helpers import AUDIO_INFO_NO_LAME, AUDIO_PLAIN, AUDIO_WITH_LAME, make_mp3, make_wav
 
 from cuebridge.services.cue_timing import MP3_OFFSET_MS, timing_offset, to_serato_ms
-from serato_helpers import AUDIO_INFO_NO_LAME, AUDIO_PLAIN, AUDIO_WITH_LAME, make_mp3, make_wav
 
 
 def test_wav_needs_no_correction(tmp_path):

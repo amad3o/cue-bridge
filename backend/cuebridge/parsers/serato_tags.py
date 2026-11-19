@@ -13,10 +13,10 @@ from mutagen.id3 import ID3, ID3NoHeaderError
 from mutagen.wave import WAVE
 
 from cuebridge.parsers.serato_markers import (
-    CueEntry,
     DESCRIPTION,
-    Entry,
     LEGACY_DESCRIPTION,
+    CueEntry,
+    Entry,
     MarkersError,
     decode_markers2,
 )

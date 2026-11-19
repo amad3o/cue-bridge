@@ -1,0 +1,15 @@
+[project]
+name = "cuebridge"
+version = "0.1.0"
+description = "An MCP server that reads, compares and converts DJ cue points between Rekordbox and Serato."
+requires-python = ">=3.10"
+
+[tool.ruff]
+line-length = 160
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["cuebridge"]

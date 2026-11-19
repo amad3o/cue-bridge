@@ -7,19 +7,31 @@ currently loaded library and translate errors for the assistant.
 """
 
 import functools
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
-from collections import Counter
 from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cuebridge.services import drift, library_queries, library_reports, playlist_export, cue_compare, rekordbox_cue_writes, rekordbox_db, rekordbox_editor, serato_sync, sync_check, db_library
 from cuebridge.parsers.apple_music_xml import MusicLibrary
-from cuebridge.services import apple_music_live
-from cuebridge.services import rekordbox_service
+from cuebridge.services import (
+    apple_music_live,
+    cue_compare,
+    db_library,
+    drift,
+    library_queries,
+    library_reports,
+    playlist_export,
+    rekordbox_cue_writes,
+    rekordbox_db,
+    rekordbox_editor,
+    rekordbox_service,
+    serato_sync,
+    sync_check,
+)
 from cuebridge.services.apple_music_service import get_apple_music_library
 from cuebridge.services.rekordbox_service import (
     LibraryError,
@@ -280,7 +292,8 @@ def compare_libraries() -> dict:
     }
     summary["summary"] = (
         f"{result.matched} Rekordbox tracks are in Apple Music; {len(result.apple_only)} playlisted Apple Music tracks "
-        f"are not in Rekordbox ({len(result.apple_only_unplaylisted)} more are in no playlist and ignored) and {len(result.rekordbox_only)} Rekordbox tracks are not in Apple Music. "
+        f"are not in Rekordbox ({len(result.apple_only_unplaylisted)} more are in no playlist and ignored) "
+        f"and {len(result.rekordbox_only)} Rekordbox tracks are not in Apple Music. "
         f"{statuses['in_sync']} of {len(result.playlists)} playlists are in sync."
     )
     return summary

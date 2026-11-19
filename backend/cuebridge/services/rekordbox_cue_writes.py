@@ -21,12 +21,12 @@ from pathlib import Path
 
 from cuebridge.services import cue_rules, db_library
 from cuebridge.services.rekordbox_db import (
+    JOURNAL_VERSION,
     ApplyResult,
     Backend,
     DatabaseError,
     DbCue,
     DbSnapshot,
-    JOURNAL_VERSION,
     UndoResult,
     _backup_database,
     _journal_path,

@@ -4,7 +4,8 @@ import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
 from cuebridge import mcp_server as server
-from cuebridge.services import db_library as dl, rekordbox_db as rd
+from cuebridge.services import db_library as dl
+from cuebridge.services import rekordbox_db as rd
 
 FIXTURE = Path(__file__).parent / "fixtures" / "rekordbox_sample.xml"
 

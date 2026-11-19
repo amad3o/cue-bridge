@@ -3,11 +3,6 @@ import os
 from pathlib import Path
 
 import pytest
-
-from cuebridge.parsers.serato_markers import CueEntry, RawEntry
-from cuebridge.parsers.serato_tags import locate_markers2, read_cues, read_markers2
-from cuebridge.services import serato_sync as sync
-from cuebridge.services.serato_sync import SyncError
 from serato_helpers import (
     AUDIO_INFO_NO_LAME,
     AUDIO_WITH_LAME,
@@ -18,6 +13,11 @@ from serato_helpers import (
     rb_cue,
     rb_track,
 )
+
+from cuebridge.parsers.serato_markers import CueEntry, RawEntry
+from cuebridge.parsers.serato_tags import locate_markers2, read_cues, read_markers2
+from cuebridge.services import serato_sync as sync
+from cuebridge.services.serato_sync import SyncError
 
 
 @pytest.fixture(autouse=True)
@@ -450,7 +450,6 @@ class TestApplying:
         assert json.loads(result.journal.read_text())["entries"][0]["state"] == "reverted"
 
     def test_damage_outside_the_tag_is_caught_and_undone(self, audio, monkeypatch):
-        original = audio.read_bytes()
         real = sync._write_region
 
         def sloppy(path, offset, data, mtime_ns, atime_ns):

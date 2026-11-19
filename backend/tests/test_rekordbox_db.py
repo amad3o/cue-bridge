@@ -2,9 +2,9 @@ import json
 from pathlib import Path
 
 import pytest
+from apple_helpers import library_bytes, music_track, playlist, write_library
 from mcp.server.mcpserver.exceptions import ToolError
 
-from apple_helpers import library_bytes, music_track, playlist, write_library
 from cuebridge import mcp_server as server
 from cuebridge.parsers.apple_music_xml import parse_apple_music_plist
 from cuebridge.services import apple_music_service
@@ -376,7 +376,6 @@ class TestUndo:
     def test_a_row_that_now_holds_another_track_is_left_alone(self, env):
         result = self.run_sync(env)
         state = json.loads(env["db"].read_text())
-        journal = json.loads(result.journal.read_text())
         next(p for p in state["playlists"] if p["name"] == "Warm")["songs"][-1][1] = "c4"
         env["db"].write_text(json.dumps(state))
 

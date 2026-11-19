@@ -4,16 +4,16 @@ import os
 from pathlib import Path
 
 import pytest
+from apple_helpers import music_track, playlist, write_library
 from mcp import Client
 from mcp.server.mcpserver.exceptions import ToolError
+from serato_helpers import AUDIO_INFO_NO_LAME, AUDIO_WITH_LAME, BPMLOCK, COLOR, make_mp3, make_wav
 
 from cuebridge import mcp_server as server
 from cuebridge.parsers.serato_markers import CueEntry
 from cuebridge.parsers.serato_tags import read_cues
 from cuebridge.services import serato_sync
 from cuebridge.services.rekordbox_service import clear_cache
-from apple_helpers import music_track, playlist, write_library
-from serato_helpers import AUDIO_INFO_NO_LAME, AUDIO_WITH_LAME, BPMLOCK, COLOR, make_mp3, make_wav
 
 FIXTURE = Path(__file__).parent / "fixtures" / "rekordbox_sample.xml"
 

@@ -1,8 +1,8 @@
 import pytest
+from serato_helpers import AUDIO_WITH_LAME, BPMLOCK, COLOR, make_mp3, make_wav, rb_cue, rb_track
 
 from cuebridge.parsers.serato_markers import CueEntry
 from cuebridge.services import cue_compare as cc
-from serato_helpers import AUDIO_WITH_LAME, BPMLOCK, COLOR, make_mp3, make_wav, rb_cue, rb_track
 
 
 def wav(tmp_path, *cues, name="a.wav"):
@@ -234,8 +234,9 @@ class TestTool:
     def database(self, tmp_path, monkeypatch):
         import json
 
-        from cuebridge.services import rekordbox_db as rd
         from test_rekordbox_db import FakeBackend
+
+        from cuebridge.services import rekordbox_db as rd
 
         files = {
             "c1": wav(tmp_path, CueEntry(0, 400, "#cc0000"), name="one.wav"),  # in a playlist; Serato's cue is off
@@ -284,8 +285,9 @@ class TestTool:
         assert (page["total"], page["returned"], page["hasMore"]) == (3, 1, True)
 
     def test_a_bad_show_value_is_refused(self, database):
-        from cuebridge import mcp_server as server
         from mcp.server.mcpserver.exceptions import ToolError
+
+        from cuebridge import mcp_server as server
 
         with pytest.raises(ToolError, match="show must be one of"):
             server.compare_cues(show="nope")
