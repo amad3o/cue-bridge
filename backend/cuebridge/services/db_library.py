@@ -9,7 +9,8 @@ How the database stores a cue (`djmdCue`):
     hot cue; Kinds 5 and 6 are D and E, and 7, 8 and 9 are F, G and H (all checked against a real
     export). Nothing is known about Kinds 4 and 10 and up, so those cues are left out and reported, not guessed into
     a slot. A hot cue that is also a memory cue has two rows at the same position.
-  * OutMsec above 0 makes it a loop.
+  * OutMsec above 0 makes it a loop (checked: a loop saved to pad H is Kind 9 with OutMsec set and
+    colour index 0; the XML export shows it as Type 4 and orange, a colour the database doesn't store as an index).
   * A hot cue's colour is an index into Rekordbox's own colour table. 0 or empty is
     Rekordbox's default (the green the XML calls #28e214), which the Serato sync
     already treats as "no colour chosen". CueBridge only knows the colour of the

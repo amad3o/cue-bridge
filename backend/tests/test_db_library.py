@@ -49,6 +49,13 @@ class TestCues:
             ("loop", None, 1000, 5000), ("loop", 0, 2000, 6000),
         ]
 
+    def test_a_hot_loop_as_stored_by_rekordbox(self):
+        # Real row (Sex, 2026-11-18): a loop saved to pad H is Kind 9 with OutMsec set and colour index 0.
+        # The XML export shows it as Type 4, Num 7, one millisecond earlier (it rounds the start in seconds).
+        (track,) = read(cue(9, 259972, out_ms=261777, color_index=0)).tracks
+
+        assert [(c.cueType, c.cueIndex, c.timeMs, c.endMs, c.color) for c in track.cues] == [("loop", 7, 259972, 261777, None)]
+
     def test_the_default_colour_means_no_colour(self):
         (track,) = read(cue(1, 10), cue(2, 20, color_index=0)).tracks
 

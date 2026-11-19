@@ -176,7 +176,7 @@ The database reader sees every track, playlist, cue and beat grid in the live co
 
 - [x] Read tracks, cues and the first beat from `master.db` into `Track` / `Cue` (`db_library.py`); `sync_cues_to_serato` and `check_sync_status` use it, with the XML as a fallback (`cue_source`).
 - [x] Hot cues F to H are kinds 7, 8 and 9, and 17 colour indexes are confirmed (41, 1, 5, 9, 14, 18, 22, 26, 30, 32, 38, 42, 45, 49, 56, 60, 62).
-- [ ] Verify how loops are stored (no loop exists in this library yet), and the colour indexes not yet seen. Those cues are left out and reported until then.
+- [x] Loops and colours verified (2026-11-18, test tracks Sex and Knockin): a hot loop on pad H is Kind 9 with `OutMsec` set and colour index 0 (the XML shows it as Type 4, orange, start 1 ms earlier from rounding); all 16 palette colours were already in `COLOR_TABLE`, and the database and the XML agree on every cue of both tracks. Memory loops and loops on other pads are still unchecked. The whole live library reads with no unknown colour and no left-out cue.
 - [ ] Still XML-only: `set_default_cue`, `duplicate_memory_cues_to_hot_cues`, and the XML playlist export.
 - [ ] Let `load_rekordbox_library` take the database as a source (`path` omitted), keeping the XML as an option. (`search_tracks`, `get_track_cues` and `find_tracks_without_cues` still read the loaded XML.)
 - [ ] Decide what replaces `set_default_cue` and `duplicate_memory_cues_to_hot_cues`: database writes with the same safeguards, or text-patched XML (known issue 2). Rekordbox must be closed for database writes.
@@ -271,7 +271,7 @@ The pytest suite checks that the code does what it says. Evaluations check that 
 Built and tested in code, but never checked in the real application. Most need the user, because only they can run Rekordbox and Serato.
 
 - [ ] **Rekordbox after the database cleanup.** Opening cleanly, the copied cues on Style, Exonym, Simple City, Sun Dog and Web Harvest, and the 51 + 5 removed rows being gone (the user opens Rekordbox and checks).
-- [ ] **Database cue numbering** for loops, kind 4 and the cue colour indexes beyond the 17 confirmed.
+- [ ] **Database cue numbering** for memory loops, loops on pads other than H, and kind 4 (hot loop on H and all 16 palette colours are confirmed).
 - [ ] **Rekordbox accepting a cue-edited XML** from `set_default_cue` and `duplicate_memory_cues_to_hot_cues` (now text-patched; known issue 2).
 - [ ] **Whether Rekordbox cloud / library sync** is affected by direct database edits (not known whether it is used).
 - [ ] **An MP3 synced to Serato and opened there**, and **colors and cue positions against Rekordbox** by ear on a few more tracks. The 5.5 ms MP3 offset was fitted on Lexicon-synced pairs from one library (matching 95 cues to within 1 ms).
@@ -290,8 +290,8 @@ Built and tested in code, but never checked in the real application. Most need t
 
 Where we paused (2026-11-06): the library is fully in sync (Apple Music, Rekordbox and Serato), the 20 missing Rekordbox files are gone, and hot cues A to H with 17 colours are verified.
 
-1. **Loops.** On a test track (`Sex` or `Knockin (Original Mix)`), save a loop to a hot cue pad (and a memory loop), re-export the XML over `/Volumes/LaCie/Music/rekordbox-2026.xml`, then read how the database stores the loop end and add it to `db_library.py`. Loops are skipped and reported until then.
-2. **Other colours.** About 60 colours exist; only 17 are confirmed. Colour a test track's pads with the rest, export, and pair the indexes the same way.
+1. ~~Loops and other colours~~ Done 2026-11-18 (see section 9). Optional: a memory loop and a loop on another pad.
+2. ~~Other colours~~ The palette has 16 colours and all are confirmed.
 3. **`.aif` cues.** One playlisted track is skipped because the Serato writer doesn't handle AIFF.
 4. **Drop the XML for the playlist export.** `export_playlists_for_rekordbox` and the two XML edit tools still need a fresh export (a stale one caused a detour today). Move them to the database or drop them.
 5. Then the cue comparison (section 4), the housekeeping (known issue 1: pin the Python version, add CI and lint) and the metadata reports (section 8).
