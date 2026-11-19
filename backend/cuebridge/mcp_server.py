@@ -22,6 +22,7 @@ from cuebridge.services import (
     cue_compare,
     db_library,
     drift,
+    library_audit,
     library_queries,
     library_reports,
     playlist_export,
@@ -169,6 +170,109 @@ def load_apple_music_library(path: str | None = None) -> dict:
         f"({summary['totalHours']} hours, {summary['totalGigabytes']} GB)."
     )
     return summary
+
+
+AUDIT_REPORTS = ("duplicates", "metadata_gaps", "playlists", "formats", "questions", "missing_files")
+# Reports about the whole library by default; the rest follow "only playlisted tracks matter".
+AUDIT_WHOLE_LIBRARY = ("playlists", "questions")
+
+
+@mcp.tool(annotations=READ_ONLY)
+@_translate_errors
+def audit_music_library(
+    report: str,
+    show: str | None = None,
+    limit: int = 25,
+    offset: int = 0,
+    playlisted_only: bool | None = None,
+    recent_days: int = 30,
+    low_bit_rate_kbps: int = 192,
+    short_seconds: int = 15,
+    many_playlists: int = 3,
+) -> dict:
+    """Read-only audits of the loaded Apple Music library. Changes nothing, anywhere.
+
+    `report` is one of:
+    - "duplicates": the same song listed twice, by title and artist
+      (`same_title_and_artist`), by file (`same_file`) and by size and length under
+      different names (`same_size_and_length`).
+    - "metadata_gaps": tracks with no artist, title, album, genre, BPM, year or
+      length (`no_artist`, `no_title`, `no_album`, `no_genre`, `no_bpm`, `no_year`,
+      `no_length`), "Unknown Artist / Unknown Album" entries and folders
+      (`unknown_artist_or_album`), and tracks shorter than `short_seconds`, which
+      are probably samples (`very_short`).
+    - "playlists": the biggest playlists (`biggest_playlists`), tracks in no playlist
+      (`not_in_any_playlist`), tracks in `many_playlists` or more
+      (`in_many_playlists`), `empty_playlists`, and which playlists share the most
+      tracks (`overlaps`).
+    - "formats": counts by format (`by_format`), lossy bit-rate band
+      (`by_lossy_bit_rate`) and sample rate (`by_sample_rate`), lossy files under
+      `low_bit_rate_kbps` (`low_bit_rate`), and the `largest_files`.
+    - "questions": the library's size, what was added in the last `recent_days`
+      (`recently_added`), and tracks `by_genre` and `by_year`.
+    - "missing_files": tracks whose file isn't at the path Apple Music has (checks
+      the disk; if most are missing, the music drive is probably not mounted).
+
+    The numbers for every section always come back; `show` picks which section's
+    items are listed (each report has a default), paged with `limit` and `offset`.
+    Only playlisted tracks are audited by default, because tracks in no playlist
+    aren't meant for Rekordbox; "playlists" and "questions" cover the whole library.
+    Pass `playlisted_only` to override either way. Needs load_apple_music_library
+    first (reload it to pick up changes made in Music).
+    """
+    if report not in AUDIT_REPORTS:
+        raise ToolError(f"report must be one of: {', '.join(AUDIT_REPORTS)}.")
+
+    music = _require_apple_library()
+
+    if playlisted_only is None:
+        playlisted_only = report not in AUDIT_WHOLE_LIBRARY
+
+    tracks, left_out = library_audit.scope_tracks(music, playlisted_only)
+
+    if report == "duplicates":
+        audit = library_audit.audit_duplicates(tracks)
+    elif report == "metadata_gaps":
+        audit = library_audit.audit_metadata_gaps(tracks, short_seconds * 1000)
+    elif report == "playlists":
+        audit = library_audit.audit_playlists(music, many_playlists)
+        left_out, playlisted_only = 0, False
+    elif report == "formats":
+        audit = library_audit.audit_formats(tracks, low_bit_rate_kbps)
+    elif report == "questions":
+        audit = library_audit.audit_questions(tracks, recent_days)
+    else:
+        audit = library_audit.audit_missing_files(tracks)
+
+    chosen = show or audit.default
+
+    if chosen not in audit.sections:
+        raise ToolError(f"For {report}, show must be one of: {', '.join(audit.sections)}.")
+
+    items = audit.sections[chosen]
+    limit = max(1, min(limit, library_queries.MAX_LIMIT))
+    offset = max(0, offset)
+    page = items[offset : offset + limit]
+    scope = "only playlisted tracks" if playlisted_only else "the whole library"
+
+    return {
+        "report": report,
+        "scope": scope,
+        "tracksLeftOutForBeingInNoPlaylist": left_out,
+        **audit.facts,
+        "sections": {name: len(found) for name, found in audit.sections.items()},
+        "shown": chosen,
+        "total": len(items),
+        "returned": len(page),
+        "hasMore": offset + len(page) < len(items),
+        "items": page,
+        "notes": audit.notes,
+        "summary": (
+            f"{report} ({scope}): "
+            + ", ".join(f"{name} {len(found)}" for name, found in audit.sections.items())
+            + f". Showing {len(page)} of {len(items)} in {chosen}. Nothing was changed."
+        ),
+    }
 
 
 @mcp.tool(annotations=READ_ONLY)

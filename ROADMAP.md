@@ -21,7 +21,7 @@ The loop that was the goal now works end to end with no manual export:
 
 ## Completed
 
-**MCP server** (`cuebridge/mcp_server.py`, stdio, `mcp` 2.x; registered in Claude Code). 26 tools, all returning compact, paginated output. The tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
+**MCP server** (`cuebridge/mcp_server.py`, stdio, `mcp` 2.x; registered in Claude Code). 27 tools, all returning compact, paginated output. The tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
 
 | Area                 | Tools                                                                                                                                                                                                                                  |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -29,7 +29,7 @@ The loop that was the goal now works end to end with no manual export:
 | Rekordbox cues, write | `set_default_cue`, `duplicate_memory_cues_to_hot_cues`, `undo_rekordbox_cue_additions` (database)                                                                                                                                     |
 | Serato               | `sync_cues_to_serato`, `undo_serato_sync`                                                                                                                                                                                              |
 | Apple Music          | `load_apple_music_library` (live from the Music app, or an exported XML), `get_playlist_tracks`                                                                                                                                        |
-| Compare              | `compare_libraries`, `list_library_differences`, `find_missing_files`, `compare_cues`                                                                                                                                                                  |
+| Compare and audit    | `compare_libraries`, `list_library_differences`, `find_missing_files`, `compare_cues`, `audit_music_library`                                                                                                                                                                  |
 | Playlists            | `export_playlists_for_rekordbox` (XML, for getting new tracks in), `sync_playlists_to_rekordbox`, `undo_rekordbox_playlist_sync` (database)                                                                                            |
 | Overview             | `check_sync_status` (read-only report across the three apps, naming the fix for each difference)                                                                                                                                       |
 | Broken paths         | `fix_moved_files_in_rekordbox`, `undo_rekordbox_file_fix` (database), `report_stale_duplicates` (read-only), `create_review_playlists`, `undo_rekordbox_review_playlists`, `clean_up_stale_duplicates`, `undo_stale_duplicate_cleanup` |
@@ -45,7 +45,7 @@ The loop that was the goal now works end to end with no manual export:
 - `check_sync_status` (`sync_check.py`): one read-only report across Apple Music, Rekordbox and Serato, with each part reported as not checkable instead of failing.
 - The Rekordbox XML is edited as text (new lines only, original bytes untouched) for the playlist export, because Rekordbox rejects an XML library's rewrite of its file.
 - Pydantic models, root `.gitignore`, README rewritten around the MCP server.
-- 738 pytest tests (ruff clean) (a shared fixture keeps every test away from the real Rekordbox database): parsers, services, the Serato codecs and sync on mutagen-built files, the XML patcher, the database logic against a fake database (with mutation checks on the safeguards), and the tools, directly and through an in-memory MCP client.
+- 776 pytest tests (ruff clean) (a shared fixture keeps every test away from the real Rekordbox database): parsers, services, the Serato codecs and sync on mutagen-built files, the XML patcher, the database logic against a fake database (with mutation checks on the safeguards), and the tools, directly and through an in-memory MCP client.
 
 **Web UI (prototype, on hold)**
 
@@ -76,7 +76,7 @@ backend/cuebridge/
   services/              path-based logic
     rekordbox_service.py (validate, cache, pending-playlist note), library_queries.py,
     rekordbox_editor.py (safe XML writing), rekordbox_cue_writes.py (cues to the database), cue_rules.py, cue_timing.py,
-    serato_sync.py, cue_compare.py, apple_music_service.py, apple_music_live.py,
+    serato_sync.py, cue_compare.py, library_audit.py, apple_music_service.py, apple_music_live.py,
     track_matcher.py, drift.py, library_reports.py,
     playlist_export.py (XML patcher), rekordbox_db.py (database)
   web/main.py            FastAPI app for the prototype UI
@@ -149,12 +149,12 @@ Only worth building if the text summaries in chat turn out not to be enough. Poi
 **Reports**
 
 - [x] Drift between Apple Music and Rekordbox, missing and moved files (for Rekordbox), Apple Music's duplicate entries.
-- [ ] Missing files for Apple Music's own paths.
-- [ ] **Duplicates:** the same title and artist (55 pairs in the Rekordbox collection), the same file in several folders, near-duplicates by duration and size.
-- [ ] **Metadata gaps:** no artist (463 of 1,667 in Apple Music), no BPM (500), zero length, "Unknown Artist / Unknown Album" folders, sample one-shots mixed into the library.
-- [ ] **Playlist hygiene:** tracks in no playlist, tracks in many, empty playlists, overlap between genre playlists, the biggest playlists.
-- [ ] **Format and quality:** counts by format, bit rate and sample rate; low-bit-rate MP3s; very large files.
-- [ ] **Library questions:** what was added recently, tracks per genre or year, the library's size.
+- [x] Missing files for Apple Music's own paths (`audit_music_library` report `missing_files`; none missing among the 1,587 playlisted tracks, 2026-11-18).
+- [x] **Duplicates** (`duplicates`): same title and artist (35 groups, 70 tracks among playlisted Apple Music tracks; 446 tracks have no artist so can't be matched), same file listed twice (45 groups), same size and length (0). Not done: the same check on the Rekordbox collection (the earlier 55 pairs).
+- [x] **Metadata gaps** (`metadata_gaps`): of 1,587 playlisted tracks, 446 have no artist, 587 no album, 26 no genre, 482 no BPM, 575 no year, 584 sit in Unknown Artist/Album, none have zero length or are under 15 s; 659 have at least one gap.
+- [x] **Playlist hygiene** (`playlists`): 80 tracks in no playlist, 129 in three or more, no empty playlists, 98 playlist pairs share tracks, biggest `dubstep` (250) and `uk bass/techno` (226).
+- [x] **Format and quality** (`formats`): 1,587 playlisted tracks, 35.6 GB, 449 lossless, lossy average 315 kbps, 5 lossy files under 192 kbps.
+- [x] **Library questions** (`questions`): 1,667 tracks, 119.3 hours, 37.2 GB, 50 genres, 22 years; nothing added in the last 30 days (newest 2026-08-26).
 
 **Actions**
 
@@ -294,7 +294,7 @@ Where we paused (2026-11-06): the library is fully in sync (Apple Music, Rekordb
 2. ~~Other colours~~ The palette has 16 colours and all are confirmed.
 3. **`.aif` cues.** One playlisted track is skipped because the Serato writer doesn't handle AIFF.
 4. ~~Drop the XML for the cue tools~~ Done 2026-11-18. The playlist export stays on XML (a stale-export guard was added).
-5. ~~The cue comparison and the housekeeping~~ Done 2026-11-18. Next: the metadata reports (section 8).
+5. ~~The cue comparison, the housekeeping and the metadata reports~~ Done 2026-11-18.
 6. **Our own agent** (section 10): pick the SDK or raw API, then a terminal loop with our own dry-run approval step.
 
 Left alone on purpose: the Rekordbox-only playlist `Trial playlist - Cloud Library Sync`.
