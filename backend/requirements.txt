@@ -1,8 +1,5 @@
 # Direct dependencies only; pip resolves the rest.
 # mcp 2.x renamed FastMCP to MCPServer, so stay below 3 until that's reviewed.
-fastapi>=0.136
-uvicorn>=0.47
-python-multipart>=0.0.28
 pydantic>=2.13
 mcp>=2.3,<3
 mutagen>=1.47

@@ -4,9 +4,9 @@ CueBridge is an **MCP server** that lets an AI assistant such as Claude read, co
 
 The parsing, matching and conversion logic stays in plain Python. The MCP server is a thin layer over it.
 
-**Audience and scope.** CueBridge is a personal tool, built around one library: Apple Music for tracks and playlists, Rekordbox for cues and USB sets, Serato for playing, with the music on an ExFAT drive. Claude Code is the MCP client. There are no plans for a command line, a standalone UI, or packaging for other people unless that changes. A single user means the tools can assume this setup, but they should stay safe, because they touch real files: dry run first, a journal, verification, and undo.
+**Audience and scope.** CueBridge is a personal tool, built around one library: Apple Music for tracks and playlists, Rekordbox for cues and USB sets, Serato for playing, with the music on an ExFAT drive. Claude Code is the MCP client. There is no UI and no plans for one, nor for packaging for other people unless that changes. A single user means the tools can assume this setup, but they should stay safe, because they touch real files: dry run first, a journal, verification, and undo.
 
-**Text first, UI later.** Every tool returns a clear text summary the assistant can show in chat, such as "12 tracks change, 31 cues added, 2 conflicts", with a short diff of the first few items. The React UI is deferred (section 7).
+**Text first.** Every tool returns a clear text summary the assistant can show in chat, such as "12 tracks change, 31 cues added, 2 conflicts", with a short diff of the first few items. There is no UI.
 
 ## Where things stand
 
@@ -45,11 +45,7 @@ The loop that was the goal now works end to end with no manual export:
 - `check_sync_status` (`sync_check.py`): one read-only report across Apple Music, Rekordbox and Serato, with each part reported as not checkable instead of failing.
 - The Rekordbox XML is edited as text (new lines only, original bytes untouched) for the playlist export, because Rekordbox rejects an XML library's rewrite of its file.
 - Pydantic models, root `.gitignore`, README rewritten around the MCP server.
-- 776 pytest tests (ruff clean) (a shared fixture keeps every test away from the real Rekordbox database): parsers, services, the Serato codecs and sync on mutagen-built files, the XML patcher, the database logic against a fake database (with mutation checks on the safeguards), and the tools, directly and through an in-memory MCP client.
-
-**Web UI (prototype, on hold)**
-
-- FastAPI `POST /upload/rekordbox` with validation, and a React upload screen with a sortable, searchable `TrackTable` plus `CueCard` / `CueComparison` components.
+- 764 pytest tests (ruff clean) (a shared fixture keeps every test away from the real Rekordbox database): parsers, services, the Serato codecs and sync on mutagen-built files, the XML patcher, the database logic against a fake database (with mutation checks on the safeguards), and the tools, directly and through an in-memory MCP client.
 
 ## Known issues
 
@@ -58,7 +54,6 @@ The loop that was the goal now works end to end with no manual export:
 3. ~~Rekordbox tracks pointing at renamed files.~~ Repaired on the live database on 2026-11-05: 1 track repointed, 56 stale duplicate rows removed (51 with nothing the twin lacked, then 5 after their cues were copied to the twin). 20 tracks remain whose file is missing and not in Apple Music; they need a decision from the user (remove them in Rekordbox or find the files). Rekordbox opening the result is still to be confirmed.
 4. ~~A Rekordbox export is needed for cues.~~ Fixed: cues, beat grids and track lengths are read from the live database (`db_library.py`), checked against an XML export on the real library (45 of 46 tracks identical, colours included; the rest were stale rows and one cue moved after the export). Hot cue slots A to H and 17 colour indexes are verified (from a test track on 2026-11-06: database index paired with the RGB in a fresh XML export); loops, kind 4 and any other colour are left out and reported.
 5. **Rekordbox can only create a playlist from an XML import, never update one.** That is why updating an existing playlist goes through the database. An XML import of `r&b` made a second `r&b` in a new "Apple Music" folder.
-6. **UI bugs to fix if the UI is revived (section 7).** The arrow-key listener is global (it fires while typing in the search box), row keys aren't stable, sort direction never flips, selection isn't reset when the filter changes, and the API URL is hardcoded to `localhost:8000`.
 
 ## To do
 
@@ -79,7 +74,6 @@ backend/cuebridge/
     serato_sync.py, cue_compare.py, library_audit.py, apple_music_service.py, apple_music_live.py,
     track_matcher.py, drift.py, library_reports.py,
     playlist_export.py (XML patcher), rekordbox_db.py (database)
-  web/main.py            FastAPI app for the prototype UI
 ```
 
 ### 2. Rekordbox XML tools
@@ -131,11 +125,7 @@ backend/cuebridge/
 - [x] CI (`.github/workflows/ci.yml`), lint (ruff: E, F, W, I; line length 160) and a one-command dev setup (`make setup`).
 - [x] Python version: developed on 3.13 (`.python-version`), supported 3.10 to 3.14 (all 738 tests pass on each).
 - ~~Packaging for local install (`pipx` or `uvx`).~~ Not needed for a personal tool.
-- [ ] **Remove the front end.** The prototype UI is on hold and the scope note says there are no plans for a standalone UI, so delete it rather than carry it. Remove `frontend/` (React app, including its `node_modules` and the stray `venv`), `backend/cuebridge/web/` (the FastAPI upload app) and `backend/tests/test_upload_endpoint.py`. Then drop what only they used from `requirements.txt` (check each first: `fastapi`, `uvicorn` and `python-multipart` may be needed by `mcp` itself or by nothing else), take the UI and `web/main.py` mentions out of the README and the layout in section 1, and delete the "Web UI (prototype, on hold)" block, known issue 6 and section 7 from this file. Mentions of the UI in section 10 (entry point) and in the scope note should then say there is no UI. Git history keeps the code if it is ever wanted again.
-
-### 7. Optional review UI (lowest priority)
-
-Only worth building if the text summaries in chat turn out not to be enough. Point the FastAPI endpoints at the service layer; generate TypeScript types from the OpenAPI schema; session-based review views and a preview-and-apply screen (a stronger confirmation than the assistant's, since the click doesn't pass through it); an `open_review_ui` tool; fix the UI bugs above; bind to `127.0.0.1` with a one-time token.
+- [x] Removed the front end (2026-11-21): `frontend/`, `backend/cuebridge/web/`, its test, and the `fastapi`, `uvicorn` and `python-multipart` requirements (`mcp` brings in the last two itself). Git history keeps the code.
 
 ### 8. Library management
 
@@ -188,7 +178,7 @@ The database reader sees every track, playlist, cue and beat grid in the live co
 Today the MCP client is Claude Code, so the conversation, the per-call approvals and the model loop all live in someone else's tool. The goal is to run CueBridge's own agent: a small program of ours that talks to the model and calls the same tools, so the behaviour, the prompts and the safety checks belong to this project. This would change the "Claude Code is the MCP client" assumption in the scope note at the top.
 
 - [ ] **Decide the shape.** Options: the Claude Agent SDK, or the Messages API with a tool-use loop (`claude-api` skill for current model ids and params). Either can load the existing MCP server over stdio, so the 24 tools stay as they are.
-- [ ] **Entry point.** A way to start it (a terminal chat loop first; the web UI in section 7 could sit on it later).
+- [ ] **Entry point.** A way to start it (a terminal chat loop).
 - [ ] **Own approval step for destructive tools.** The dry run is shown and the user confirms before `dry_run=false`, enforced by our code rather than Claude Code's per-call prompt (this also answers the weakness noted in section 5).
 - [ ] **System prompt and guardrails.** Move the server's instructions and the memory notes (for example, only playlisted tracks matter) into the agent's own prompt; restrict it to CueBridge's tools.
 - [ ] **Cost and context control.** Paginated tool output already helps; add a budget per session and trimming of long tool results.

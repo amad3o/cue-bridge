@@ -136,19 +136,4 @@ backend/cuebridge/
                    Apple Music (file and live), the playlist export's XML writing, Rekordbox's database (reading,
                    writing, adding cues, and its cues as Track/Cue), the three-way sync check
   mcp_server.py    the MCP server (a thin layer over services/)
-  web/main.py      FastAPI app used by the prototype web UI
-frontend/          React + TypeScript prototype UI
-```
-
-### Prototype web UI (on hold)
-
-An earlier version had a web UI for uploading and browsing a Rekordbox XML. It still runs but isn't being extended until the MCP workflow is complete (see the roadmap).
-
-```bash
-# terminal 1, in backend/ with the virtualenv active
-uvicorn cuebridge.web.main:app --reload --port 8000
-
-# terminal 2, in frontend/
-npm install
-npm run dev                   # then open http://localhost:5173
 ```
