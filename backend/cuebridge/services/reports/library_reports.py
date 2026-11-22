@@ -7,7 +7,7 @@ from typing import Callable
 
 from cuebridge.models import Track
 from cuebridge.parsers.apple_music_xml import MusicLibrary, MusicTrack
-from cuebridge.services.track_matcher import AppleMusicIndex, MatchResult, normalize_path
+from cuebridge.services.compare.track_matcher import AppleMusicIndex, MatchResult, normalize_path
 
 
 @dataclass(frozen=True)

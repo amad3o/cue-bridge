@@ -1,5 +1,5 @@
 from cuebridge.models import Cue
-from cuebridge.services.cue_rules import plan_memory_to_hot
+from cuebridge.services.cues.cue_rules import plan_memory_to_hot
 
 
 def cue(kind, time_ms, slot=None, name=None):

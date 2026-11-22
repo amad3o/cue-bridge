@@ -17,28 +17,21 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from cuebridge.parsers.apple_music_xml import MusicLibrary
-from cuebridge.services import (
-    apple_music_live,
-    cue_compare,
-    db_library,
-    drift,
-    library_audit,
-    library_queries,
-    library_reports,
-    playlist_export,
-    rekordbox_cue_writes,
-    rekordbox_db,
-    rekordbox_editor,
-    rekordbox_service,
-    serato_sync,
-    sync_check,
-)
-from cuebridge.services.apple_music_service import get_apple_music_library
-from cuebridge.services.rekordbox_service import (
+from cuebridge.services.apple_music import live as apple_music_live
+from cuebridge.services.apple_music.service import get_apple_music_library
+from cuebridge.services.compare import cue_compare, drift, sync_check
+from cuebridge.services.rekordbox import cue_writes as rekordbox_cue_writes
+from cuebridge.services.rekordbox import db as rekordbox_db
+from cuebridge.services.rekordbox import db_library, playlist_export
+from cuebridge.services.rekordbox import editor as rekordbox_editor
+from cuebridge.services.rekordbox import service as rekordbox_service
+from cuebridge.services.rekordbox.service import (
     LibraryError,
     RekordboxLibrary,
     get_rekordbox_library,
 )
+from cuebridge.services.reports import library_audit, library_queries, library_reports
+from cuebridge.services.serato import sync as serato_sync
 
 mcp = MCPServer(
     "cuebridge",

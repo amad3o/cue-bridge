@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Callable
 
 from cuebridge.parsers.apple_music_xml import MusicLibrary, MusicPlaylist, MusicTrack
-from cuebridge.services.rekordbox_service import LibraryError
+from cuebridge.services.rekordbox.service import LibraryError
 
 TIMEOUT_SECONDS = 240
 

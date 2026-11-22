@@ -1,7 +1,7 @@
 """Load Rekordbox libraries from files or raw bytes.
 
-This is the layer both the HTTP endpoints and the MCP server call. It knows
-nothing about FastAPI: it takes paths or bytes, validates them, and returns
+This is the layer both the HTTP endpoints and the MCP server call:
+it takes paths or bytes, validates them, and returns
 Track models or raises a LibraryError subclass.
 """
 

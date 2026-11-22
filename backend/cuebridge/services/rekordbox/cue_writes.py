@@ -19,8 +19,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from cuebridge.services import cue_rules, db_library
-from cuebridge.services.rekordbox_db import (
+from cuebridge.services.cues import cue_rules
+from cuebridge.services.rekordbox import db_library
+from cuebridge.services.rekordbox.db import (
     JOURNAL_VERSION,
     ApplyResult,
     Backend,

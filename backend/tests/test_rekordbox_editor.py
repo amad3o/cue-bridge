@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from cuebridge.services import rekordbox_editor as editor
-from cuebridge.services.rekordbox_editor import OutputPathError
+from cuebridge.services.rekordbox import editor
+from cuebridge.services.rekordbox.editor import OutputPathError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "rekordbox_sample.xml"
 
@@ -123,7 +123,7 @@ class TestInPlace:
         assert result.backup is None and backups_of(source) == []
 
     def test_a_pending_playlist_note_follows_the_file(self, source):
-        from cuebridge.services.rekordbox_service import has_pending_playlists, write_pending_note
+        from cuebridge.services.rekordbox.service import has_pending_playlists, write_pending_note
 
         patched = source.read_bytes().replace(b"</PLAYLISTS>", b'  <NODE Name="Apple Music" Type="0" Count="0"></NODE>\n  </PLAYLISTS>')
         source.write_bytes(patched)

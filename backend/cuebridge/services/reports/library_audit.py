@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from typing import Callable
 
 from cuebridge.parsers.apple_music_xml import MusicLibrary, MusicTrack
-from cuebridge.services.library_queries import format_time
+from cuebridge.services.reports.library_queries import format_time
 
 LOSSLESS_WORDS = ("wav", "aiff", "aif", "lossless", "flac", "alac")
 UNKNOWN = re.compile(r"\bunknown (artist|album)\b", re.IGNORECASE)

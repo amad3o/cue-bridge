@@ -20,7 +20,9 @@ from pathlib import Path
 from cuebridge.models import Track
 from cuebridge.parsers.apple_music_xml import MusicLibrary
 from cuebridge.parsers.rekordbox_parser import RekordboxPlaylist
-from cuebridge.services import drift, rekordbox_db, serato_sync
+from cuebridge.services.compare import drift
+from cuebridge.services.rekordbox import db as rekordbox_db
+from cuebridge.services.serato import sync as serato_sync
 
 MAX_LISTED = 15
 STALE_AFTER = timedelta(minutes=5)  # how much newer the database may be than the export before cues are doubted

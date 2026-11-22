@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 
 from cuebridge.parsers.apple_music_xml import MusicLibrary, MusicPlaylist, MusicTrack
-from cuebridge.services import library_audit as la
+from cuebridge.services.reports import library_audit as la
 
 NOW = datetime(2026, 11, 18, 12, 0)
 

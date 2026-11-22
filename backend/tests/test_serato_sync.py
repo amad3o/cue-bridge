@@ -16,8 +16,8 @@ from serato_helpers import (
 
 from cuebridge.parsers.serato_markers import CueEntry, RawEntry
 from cuebridge.parsers.serato_tags import locate_markers2, read_cues, read_markers2
-from cuebridge.services import serato_sync as sync
-from cuebridge.services.serato_sync import SyncError
+from cuebridge.services.serato import sync
+from cuebridge.services.serato.sync import SyncError
 
 
 @pytest.fixture(autouse=True)

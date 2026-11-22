@@ -39,9 +39,10 @@ from typing import Protocol
 from cuebridge.models import Track
 from cuebridge.parsers.apple_music_xml import MusicLibrary
 from cuebridge.parsers.rekordbox_parser import RekordboxPlaylist
-from cuebridge.services import drift, library_reports
-from cuebridge.services.rekordbox_service import LibraryError
-from cuebridge.services.track_matcher import normalize_path
+from cuebridge.services.compare import drift
+from cuebridge.services.compare.track_matcher import normalize_path
+from cuebridge.services.rekordbox.service import LibraryError
+from cuebridge.services.reports import library_reports
 
 DB_FILES = ("master.db", "master.db-wal", "master.db-shm", "masterPlaylists6.xml")
 SETTINGS_FILE = Path("~/Library/Application Support/Pioneer/rekordbox6/rekordbox3.settings")

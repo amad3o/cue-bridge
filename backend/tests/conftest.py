@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from cuebridge.services import rekordbox_db
+from cuebridge.services.rekordbox import db as rekordbox_db
 
 
 @pytest.fixture(autouse=True)

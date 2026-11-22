@@ -6,8 +6,9 @@ from apple_helpers import library_bytes, music_track, playlist, write_library
 
 from cuebridge import mcp_server as server
 from cuebridge.parsers.apple_music_xml import parse_apple_music_plist
-from cuebridge.services import apple_music_service, sync_check
-from cuebridge.services import rekordbox_db as rd
+from cuebridge.services.apple_music import service as apple_music_service
+from cuebridge.services.compare import sync_check
+from cuebridge.services.rekordbox import db as rd
 
 
 def music(tmp_path):
@@ -180,7 +181,7 @@ class TestTool:
         assert sorted(p.name for p in tmp_path.iterdir()) == before
 
     def test_it_needs_apple_music(self, monkeypatch):
-        from cuebridge.services import apple_music_live
+        from cuebridge.services.apple_music import live as apple_music_live
 
         def fail():
             raise apple_music_live.MusicAppError("Music isn't open")

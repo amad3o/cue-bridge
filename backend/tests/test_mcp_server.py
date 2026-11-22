@@ -12,8 +12,8 @@ from serato_helpers import AUDIO_INFO_NO_LAME, AUDIO_WITH_LAME, BPMLOCK, COLOR, 
 from cuebridge import mcp_server as server
 from cuebridge.parsers.serato_markers import CueEntry
 from cuebridge.parsers.serato_tags import read_cues
-from cuebridge.services import serato_sync
-from cuebridge.services.rekordbox_service import clear_cache
+from cuebridge.services.rekordbox.service import clear_cache
+from cuebridge.services.serato import sync as serato_sync
 
 FIXTURE = Path(__file__).parent / "fixtures" / "rekordbox_sample.xml"
 
@@ -316,7 +316,7 @@ class TestSyncToSerato:
 class TestAppleMusicTools:
     @pytest.fixture(autouse=True)
     def safe_environment(self, tmp_path, monkeypatch):
-        from cuebridge.services import apple_music_service
+        from cuebridge.services.apple_music import service as apple_music_service
 
         apple_music_service.clear_cache()
         monkeypatch.setenv("CUEBRIDGE_HOME", str(tmp_path / "cuebridge-home"))

@@ -25,15 +25,15 @@ from urllib.parse import quote
 
 from cuebridge.parsers.apple_music_xml import MusicLibrary, MusicTrack
 from cuebridge.parsers.rekordbox_parser import parse_rekordbox_playlists
-from cuebridge.services.drift import LibraryDrift
-from cuebridge.services.rekordbox_editor import (
+from cuebridge.services.compare.drift import LibraryDrift
+from cuebridge.services.rekordbox.editor import (
     EditTarget,
     OutputPathError,
     _read_source,
     _replace_atomically,
     resolve_target,
 )
-from cuebridge.services.rekordbox_service import (
+from cuebridge.services.rekordbox.service import (
     PENDING_TRACK_ID_BASE,
     LibraryError,
     RekordboxLibrary,

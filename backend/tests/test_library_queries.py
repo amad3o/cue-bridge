@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from cuebridge.services import library_queries as q
-from cuebridge.services.rekordbox_service import clear_cache, get_rekordbox_library
+from cuebridge.services.rekordbox.service import clear_cache, get_rekordbox_library
+from cuebridge.services.reports import library_queries as q
 
 FIXTURE = Path(__file__).parent / "fixtures" / "rekordbox_sample.xml"
 

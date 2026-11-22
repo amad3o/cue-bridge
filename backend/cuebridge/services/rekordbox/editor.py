@@ -1,10 +1,10 @@
 """Write an edited Rekordbox XML export safely.
 
-Used by the playlist export (`playlist_export.py`), which builds the new XML by patching
+Used by the playlist export (`rekordbox/playlist_export.py`), which builds the new XML by patching
 the file's text. The file is never parsed and written back, because Rekordbox rejects an
 XML export that went through an XML library (different declaration, line endings,
 escaping and spacing). The cue editors that used to live here now work on the database
-(`rekordbox_cue_writes.py`).
+(`rekordbox/cue_writes.py`).
 
 By default an edit is saved into the file itself. Because that changes a file
 the user cares about, every in-place edit saves a timestamped backup next to
@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
-from cuebridge.services.rekordbox_service import (
+from cuebridge.services.rekordbox.service import (
     LibraryError,
     pending_folder,
     read_library_bytes,

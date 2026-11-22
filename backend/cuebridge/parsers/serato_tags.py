@@ -20,7 +20,7 @@ from cuebridge.parsers.serato_markers import (
     MarkersError,
     decode_markers2,
 )
-from cuebridge.services.rekordbox_service import LibraryError
+from cuebridge.services.rekordbox.service import LibraryError
 
 SUPPORTED_SUFFIXES = (".mp3", ".wav")
 _FRAME_KEY = f"GEOB:{DESCRIPTION}"

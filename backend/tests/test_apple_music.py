@@ -5,10 +5,10 @@ from apple_helpers import library_bytes, music_track, playlist, write_library
 
 from cuebridge.models import Track
 from cuebridge.parsers.apple_music_xml import AppleMusicParseError, parse_apple_music_plist
-from cuebridge.services import apple_music_service as service
-from cuebridge.services import library_reports as reports
-from cuebridge.services.rekordbox_service import InvalidFileError
-from cuebridge.services.track_matcher import AppleMusicIndex, normalize_path, normalize_text
+from cuebridge.services.apple_music import service
+from cuebridge.services.compare.track_matcher import AppleMusicIndex, normalize_path, normalize_text
+from cuebridge.services.rekordbox.service import InvalidFileError
+from cuebridge.services.reports import library_reports as reports
 
 
 def rb(track_id="1", title="Song", artist="Artist", path="/x/song.mp3", cues=(), **extra):

@@ -5,8 +5,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 from test_rekordbox_db import FakeBackend, db_state
 
 from cuebridge import mcp_server as server
-from cuebridge.services import rekordbox_cue_writes as cw
-from cuebridge.services import rekordbox_db as rd
+from cuebridge.services.rekordbox import cue_writes as cw
+from cuebridge.services.rekordbox import db as rd
 
 # Kinds as Rekordbox stores them: 0 memory, 1-3 A-C, 5-9 D-H; 4 and 10+ are unknown to CueBridge.
 

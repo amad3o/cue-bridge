@@ -2,7 +2,7 @@ import pytest
 from serato_helpers import AUDIO_WITH_LAME, BPMLOCK, COLOR, make_mp3, make_wav, rb_cue, rb_track
 
 from cuebridge.parsers.serato_markers import CueEntry
-from cuebridge.services import cue_compare as cc
+from cuebridge.services.compare import cue_compare as cc
 
 
 def wav(tmp_path, *cues, name="a.wav"):
@@ -170,7 +170,7 @@ class TestSkips:
 
     def test_an_unreadable_serato_tag_is_skipped_with_the_reason(self, tmp_path):
         path = make_wav(tmp_path / "bad.wav", [COLOR])
-        import cuebridge.services.cue_compare as module
+        import cuebridge.services.compare.cue_compare as module
         from cuebridge.parsers.serato_markers import MarkersError
 
         def broken(_):
@@ -222,7 +222,7 @@ class TestTool:
     @pytest.fixture(autouse=True)
     def clean(self):
         from cuebridge import mcp_server
-        from cuebridge.services.rekordbox_service import clear_cache
+        from cuebridge.services.rekordbox.service import clear_cache
 
         clear_cache()
         mcp_server.reset_state()
@@ -236,7 +236,7 @@ class TestTool:
 
         from test_rekordbox_db import FakeBackend
 
-        from cuebridge.services import rekordbox_db as rd
+        from cuebridge.services.rekordbox import db as rd
 
         files = {
             "c1": wav(tmp_path, CueEntry(0, 400, "#cc0000"), name="one.wav"),  # in a playlist; Serato's cue is off

@@ -46,10 +46,10 @@ from cuebridge.parsers.serato_tags import (
     locate_legacy_markers,
     locate_markers2,
 )
-from cuebridge.services.cue_rules import MAX_HOT_CUE_SLOTS, plan_memory_to_hot
-from cuebridge.services.cue_timing import TimingOffset, refine_with_beat_grids, timing_offset, to_serato_ms
-from cuebridge.services.library_queries import format_time
-from cuebridge.services.rekordbox_service import LibraryError
+from cuebridge.services.cues.cue_rules import MAX_HOT_CUE_SLOTS, plan_memory_to_hot
+from cuebridge.services.cues.cue_timing import TimingOffset, refine_with_beat_grids, timing_offset, to_serato_ms
+from cuebridge.services.rekordbox.service import LibraryError
+from cuebridge.services.reports.library_queries import format_time
 
 # Rekordbox exports this green (40, 226, 20) on every hot cue nobody has recolored,
 # so it says nothing about the color the user wants in Serato.

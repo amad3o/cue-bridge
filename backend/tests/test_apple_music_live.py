@@ -5,8 +5,8 @@ import subprocess
 import pytest
 
 from cuebridge import mcp_server as server
-from cuebridge.services import apple_music_live as live
-from cuebridge.services import apple_music_service
+from cuebridge.services.apple_music import live
+from cuebridge.services.apple_music import service as apple_music_service
 
 
 def raw_track(pid, name, artist="X", location="/Volumes/Music/Media/Music/a.mp3", **extra):

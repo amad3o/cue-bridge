@@ -132,8 +132,12 @@ Layout:
 backend/cuebridge/
   models.py        shared Pydantic models (Track, Cue)
   parsers/         file formats to models (Rekordbox XML, Apple Music XML, Serato tags)
-  services/        path-based logic: loading and caching, queries and comparison, the Serato sync,
-                   Apple Music (file and live), the playlist export's XML writing, Rekordbox's database (reading,
-                   writing, adding cues, and its cues as Track/Cue), the three-way sync check
+  services/        the logic, grouped by app:
+    rekordbox/     loading and caching, the live database (reading, writing, adding cues, its cues as Track/Cue), the playlist export's XML writing
+    apple_music/   reading Apple Music, live from the app or from a file
+    serato/        the cue sync into Serato's tags
+    compare/       matching tracks, finding differences, the cue comparison, the three-way sync check
+    reports/       searches and the read-only reports
+    cues/          cue rules and timing
   mcp_server.py    the MCP server (a thin layer over services/)
 ```

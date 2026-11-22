@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Callable
 
 from cuebridge.models import Cue, Track
-from cuebridge.services.rekordbox_db import DbCue, DbSnapshot
+from cuebridge.services.rekordbox.db import DbCue, DbSnapshot
 
 # Colour index -> colour, only for the ones confirmed by comparing the database with an XML export
 # (41 earlier; the other 16 from a test track whose cues were each given a different colour).

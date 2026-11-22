@@ -8,7 +8,7 @@ from collections import Counter
 from pathlib import PurePath
 
 from cuebridge.models import Cue, Track
-from cuebridge.services.rekordbox_service import RekordboxLibrary
+from cuebridge.services.rekordbox.service import RekordboxLibrary
 
 DEFAULT_LIMIT = 25
 MAX_LIMIT = 100

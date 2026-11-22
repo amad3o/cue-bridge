@@ -9,10 +9,13 @@ from test_drift import rb_playlist_xml, rb_track_xml, rb_xml
 from cuebridge import mcp_server as server
 from cuebridge.parsers.apple_music_xml import parse_apple_music_plist
 from cuebridge.parsers.rekordbox_parser import parse_rekordbox_playlists
-from cuebridge.services import apple_music_service, drift, rekordbox_editor, rekordbox_service
-from cuebridge.services import playlist_export as pe
-from cuebridge.services.rekordbox_editor import OutputPathError
-from cuebridge.services.rekordbox_service import clear_cache, get_rekordbox_library, parse_rekordbox_bytes
+from cuebridge.services.apple_music import service as apple_music_service
+from cuebridge.services.compare import drift
+from cuebridge.services.rekordbox import editor as rekordbox_editor
+from cuebridge.services.rekordbox import playlist_export as pe
+from cuebridge.services.rekordbox import service as rekordbox_service
+from cuebridge.services.rekordbox.editor import OutputPathError
+from cuebridge.services.rekordbox.service import clear_cache, get_rekordbox_library, parse_rekordbox_bytes
 
 ON_DISK = {"/Music/a.mp3", "/Music/b.mp3", "/Music/d & co.mp3", "/Music/e.mp3", "/Music/new name.mp3"}
 
@@ -228,7 +231,7 @@ class TestTool:
     @pytest.fixture
     def database(self, loaded, monkeypatch):
         """A Rekordbox database file as old as the export, found as Rekordbox's own."""
-        from cuebridge.services import rekordbox_db
+        from cuebridge.services.rekordbox import db as rekordbox_db
 
         path = loaded / "master.db"
         path.write_bytes(b"db")

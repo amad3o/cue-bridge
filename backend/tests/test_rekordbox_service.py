@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 
 from cuebridge.models import Track
-from cuebridge.services import rekordbox_service
-from cuebridge.services.rekordbox_service import (
+from cuebridge.services.rekordbox import service as rekordbox_service
+from cuebridge.services.rekordbox.service import (
     FileTooLargeError,
     InvalidFileError,
     parse_rekordbox_bytes,

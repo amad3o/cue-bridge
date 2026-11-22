@@ -1,7 +1,7 @@
 import pytest
 from serato_helpers import AUDIO_INFO_NO_LAME, AUDIO_PLAIN, AUDIO_WITH_LAME, make_mp3, make_wav
 
-from cuebridge.services.cue_timing import MP3_OFFSET_MS, timing_offset, to_serato_ms
+from cuebridge.services.cues.cue_timing import MP3_OFFSET_MS, timing_offset, to_serato_ms
 
 
 def test_wav_needs_no_correction(tmp_path):
@@ -71,7 +71,7 @@ class TestBeatGridEstimate:
         return make_mp3(tmp_path / "x.mp3", None, audio=AUDIO_INFO_NO_LAME, beatgrid=(serato_first_ms, bpm))
 
     def refine(self, path, rekordbox_first_beat_ms):
-        from cuebridge.services.cue_timing import refine_with_beat_grids
+        from cuebridge.services.cues.cue_timing import refine_with_beat_grids
 
         return refine_with_beat_grids(timing_offset(path), path, rekordbox_first_beat_ms)
 

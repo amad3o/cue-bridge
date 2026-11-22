@@ -42,7 +42,7 @@ The loop that was the goal now works end to end with no manual export:
 - Apple Music: XML reader, and a live reader that runs a read-only JXA script through `osascript` (the "Share iTunes Library XML" setting doesn't exist in macOS 15's Music app).
 - A track matcher (path, file name, then title and artist with duration; never guesses between equal candidates), the Rekordbox/Apple Music drift comparison, and a missing-files report. Only playlisted Apple Music tracks matter (tracks in no playlist are counted and ignored).
 - Rekordbox's own database (`master.db`, found from Rekordbox's settings; on this setup it is on the music drive) through pyrekordbox and SQLCipher, an optional dependency. Reads tracks, playlists, cues (slots A to E, memory cues, one colour verified), beat grids and track lengths; writes playlist additions, file paths, cue copies and row removal, always with backup, journal, read-back verification and undo.
-- `check_sync_status` (`sync_check.py`): one read-only report across Apple Music, Rekordbox and Serato, with each part reported as not checkable instead of failing.
+- `check_sync_status` (`compare/sync_check.py`): one read-only report across Apple Music, Rekordbox and Serato, with each part reported as not checkable instead of failing.
 - The Rekordbox XML is edited as text (new lines only, original bytes untouched) for the playlist export, because Rekordbox rejects an XML library's rewrite of its file.
 - Pydantic models, root `.gitignore`, README rewritten around the MCP server.
 - 764 pytest tests (ruff clean) (a shared fixture keeps every test away from the real Rekordbox database): parsers, services, the Serato codecs and sync on mutagen-built files, the XML patcher, the database logic against a fake database (with mutation checks on the safeguards), and the tools, directly and through an in-memory MCP client.
@@ -50,9 +50,9 @@ The loop that was the goal now works end to end with no manual export:
 ## Known issues
 
 1. ~~Housekeeping.~~ Done 2026-11-18: `.python-version` (3.13), `requires-python >=3.10` and ruff config in `backend/pyproject.toml`, a `Makefile` (`make setup`, `make check`), and GitHub Actions CI (ruff and pytest on Python 3.10 to 3.14). The tests pass on all five versions locally. The CI workflow itself hasn't run on GitHub yet.
-2. ~~The two Rekordbox XML edit tools re-serialised the XML.~~ Gone: both now write to the database (2026-11-18, section 9), and the XML cue-editing code and its tests were deleted. `rekordbox_editor.py` keeps only the safe-write layer the playlist export uses.
+2. ~~The two Rekordbox XML edit tools re-serialised the XML.~~ Gone: both now write to the database (2026-11-18, section 9), and the XML cue-editing code and its tests were deleted. `rekordbox/editor.py` keeps only the safe-write layer the playlist export uses.
 3. ~~Rekordbox tracks pointing at renamed files.~~ Repaired on the live database on 2026-11-05: 1 track repointed, 56 stale duplicate rows removed (51 with nothing the twin lacked, then 5 after their cues were copied to the twin). 20 tracks remain whose file is missing and not in Apple Music; they need a decision from the user (remove them in Rekordbox or find the files). Rekordbox opening the result is still to be confirmed.
-4. ~~A Rekordbox export is needed for cues.~~ Fixed: cues, beat grids and track lengths are read from the live database (`db_library.py`), checked against an XML export on the real library (45 of 46 tracks identical, colours included; the rest were stale rows and one cue moved after the export). Hot cue slots A to H and 17 colour indexes are verified (from a test track on 2026-11-06: database index paired with the RGB in a fresh XML export); loops, kind 4 and any other colour are left out and reported.
+4. ~~A Rekordbox export is needed for cues.~~ Fixed: cues, beat grids and track lengths are read from the live database (`rekordbox/db_library.py`), checked against an XML export on the real library (45 of 46 tracks identical, colours included; the rest were stale rows and one cue moved after the export). Hot cue slots A to H and 17 colour indexes are verified (from a test track on 2026-11-06: database index paired with the RGB in a fresh XML export); loops, kind 4 and any other colour are left out and reported.
 5. **Rekordbox can only create a playlist from an XML import, never update one.** That is why updating an existing playlist goes through the database. An XML import of `r&b` made a second `r&b` in a new "Apple Music" folder.
 
 ## To do
@@ -68,12 +68,14 @@ backend/cuebridge/
   parsers/               file formats to models
     paths.py, rekordbox_parser.py, apple_music_xml.py,
     serato_markers.py (both codecs), serato_tags.py (read, locate, beat grid)
-  services/              path-based logic
-    rekordbox_service.py (validate, cache, pending-playlist note), library_queries.py,
-    rekordbox_editor.py (safe XML writing), rekordbox_cue_writes.py (cues to the database), cue_rules.py, cue_timing.py,
-    serato_sync.py, cue_compare.py, library_audit.py, apple_music_service.py, apple_music_live.py,
-    track_matcher.py, drift.py, library_reports.py,
-    playlist_export.py (XML patcher), rekordbox_db.py (database)
+  services/              path-based logic, grouped by app
+    rekordbox/           service.py (validate, cache, pending-playlist note), db.py (the database), db_library.py (its cues as Track/Cue),
+                         cue_writes.py (cues to the database), editor.py (safe XML writing), playlist_export.py (XML patcher)
+    apple_music/         live.py (the open Music app), service.py (the file)
+    serato/              sync.py
+    compare/             track_matcher.py, drift.py, cue_compare.py, sync_check.py
+    reports/             library_queries.py, library_audit.py, library_reports.py
+    cues/                cue_rules.py, cue_timing.py
 ```
 
 ### 2. Rekordbox XML tools
@@ -165,12 +167,12 @@ backend/cuebridge/
 
 The database reader sees every track, playlist, cue and beat grid in the live collection, so the cue sync, the comparison and the playlist tools run with no export. What is left is verifying the rarer cue slots and colours, and the two XML editing tools.
 
-- [x] Read tracks, cues and the first beat from `master.db` into `Track` / `Cue` (`db_library.py`); `sync_cues_to_serato` and `check_sync_status` use it, with the XML as a fallback (`cue_source`).
+- [x] Read tracks, cues and the first beat from `master.db` into `Track` / `Cue` (`rekordbox/db_library.py`); `sync_cues_to_serato` and `check_sync_status` use it, with the XML as a fallback (`cue_source`).
 - [x] Hot cues F to H are kinds 7, 8 and 9, and 17 colour indexes are confirmed (41, 1, 5, 9, 14, 18, 22, 26, 30, 32, 38, 42, 45, 49, 56, 60, 62).
 - [x] Loops and colours verified (2026-11-18, test tracks Sex and Knockin): a hot loop on pad H is Kind 9 with `OutMsec` set and colour index 0 (the XML shows it as Type 4, orange, start 1 ms earlier from rounding); all 16 palette colours were already in `COLOR_TABLE`, and the database and the XML agree on every cue of both tracks. Memory loops and loops on other pads are still unchecked. The whole live library reads with no unknown colour and no left-out cue.
 - [ ] Still XML-only: the XML playlist export (it can't move: new tracks need Rekordbox's own import). It now refuses an export older than the database (`allow_stale_export` overrides).
 - [ ] Let `load_rekordbox_library` take the database as a source (`path` omitted), keeping the XML as an option. (`search_tracks`, `get_track_cues` and `find_tracks_without_cues` still read the loaded XML.)
-- [x] Decided: database writes with the same safeguards (`rekordbox_cue_writes.py`).
+- [x] Decided: database writes with the same safeguards (`rekordbox/cue_writes.py`).
 - [ ] Rekordbox's own "auto export collection" setting was found disabled (`CollectionAutoExportEnable`, path `~/Dropbox/rekordbox/xml`) and was enabled by the user; check whether it writes an XML by itself, which would be a simpler route.
 
 ### 10. Our own agent (instead of relying on Claude Code)
@@ -195,7 +197,7 @@ Build DJ sets from a brief such as "sunset set, 120 to 126 BPM, start deep, end 
 
 **Stage 1: key and BPM, no new storage**
 
-- [ ] Read BPM and key per track from the Rekordbox database (`db_library.py`), playlisted tracks only.
+- [ ] Read BPM and key per track from the Rekordbox database (`rekordbox/db_library.py`), playlisted tracks only.
 - [ ] Camelot wheel helper: compatible keys (same, +/-1, relative major or minor) and a key distance.
 - [ ] Pairwise transition score (key distance, BPM step, later mood drift) and a greedy sequence builder with a start, an end and an energy arc.
 - [ ] Tool `build_set` (read-only): returns an ordered list with the score of each transition, for review.

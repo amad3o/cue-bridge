@@ -7,8 +7,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from cuebridge import mcp_server as server
 from cuebridge.parsers.apple_music_xml import parse_apple_music_plist
-from cuebridge.services import apple_music_service
-from cuebridge.services import rekordbox_db as rd
+from cuebridge.services.apple_music import service as apple_music_service
+from cuebridge.services.rekordbox import db as rd
 
 
 class FakeWriter:

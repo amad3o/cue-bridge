@@ -19,7 +19,7 @@ from serato_helpers import (
 from cuebridge.parsers import serato_markers as m
 from cuebridge.parsers.serato_markers import CueEntry, MarkersError
 from cuebridge.parsers.serato_tags import locate_legacy_markers, locate_markers2
-from cuebridge.services import serato_sync as sync
+from cuebridge.services.serato import sync
 
 
 @pytest.fixture(autouse=True)

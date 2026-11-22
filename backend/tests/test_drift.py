@@ -6,9 +6,10 @@ from test_apple_music import rb
 from cuebridge import mcp_server as server
 from cuebridge.parsers.apple_music_xml import parse_apple_music_plist
 from cuebridge.parsers.rekordbox_parser import parse_rekordbox_playlists
-from cuebridge.services import apple_music_service, drift
-from cuebridge.services.rekordbox_service import clear_cache, get_rekordbox_library
-from cuebridge.services.track_matcher import AppleMusicIndex
+from cuebridge.services.apple_music import service as apple_music_service
+from cuebridge.services.compare import drift
+from cuebridge.services.compare.track_matcher import AppleMusicIndex
+from cuebridge.services.rekordbox.service import clear_cache, get_rekordbox_library
 
 
 def rb_xml(tracks: str, playlists: str) -> bytes:
