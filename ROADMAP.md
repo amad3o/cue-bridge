@@ -64,7 +64,10 @@ Done. The package is `cuebridge` (a generic name like `app` can collide with oth
 ```
 backend/cuebridge/
   models.py              shared Pydantic models (Track, Cue)
-  mcp_server.py          the MCP server: tools and their instructions
+  tools/                 the MCP tools, one module per area
+    common.py (the server, its instructions, the loaded-library state), libraries.py, reports.py, playlists.py,
+    repairs.py, cues.py, serato.py, cue_source.py (where the cues come from)
+  mcp_server.py          the entry point: imports the tools and starts the server
   parsers/               file formats to models
     paths.py, rekordbox_parser.py, apple_music_xml.py,
     serato_markers.py (both codecs), serato_tags.py (read, locate, beat grid)
@@ -179,7 +182,7 @@ The database reader sees every track, playlist, cue and beat grid in the live co
 
 Today the MCP client is Claude Code, so the conversation, the per-call approvals and the model loop all live in someone else's tool. The goal is to run CueBridge's own agent: a small program of ours that talks to the model and calls the same tools, so the behaviour, the prompts and the safety checks belong to this project. This would change the "Claude Code is the MCP client" assumption in the scope note at the top.
 
-- [x] **Decided the shape (2026-11-21):** the OpenAI Agents SDK for Python (`openai-agents`), not the JS one (the backend is Python, so no Node toolchain comes back after the front end's removal). It loads the existing MCP server over stdio with `MCPServerStdio` (`python -m cuebridge.mcp_server`, `PYTHONPATH=backend`), so the 24 tools stay as they are. The loop is `Runner.run`, with a REPL on top for multi-turn chat.
+- [x] **Decided the shape (2026-11-21):** the OpenAI Agents SDK for Python (`openai-agents`), not the JS one (the backend is Python, so no Node toolchain comes back after the front end's removal). It loads the existing MCP server over stdio with `MCPServerStdio` (`python -m cuebridge.mcp_server`, `PYTHONPATH=backend`), so the 27 tools stay as they are. The loop is `Runner.run`, with a REPL on top for multi-turn chat.
 - [ ] **Entry point.** `backend/cuebridge/agent.py` (about 50 to 80 lines), a `make agent` target, `openai-agents` in `requirements.txt`. A terminal chat loop first.
 - [ ] **Own approval step for destructive tools.** The dry run is shown and the user confirms before `dry_run=false`, enforced by our code rather than Claude Code's per-call prompt (this also answers the weakness noted in section 5). Use the SDK's tool-approval mechanism for MCP servers: pause the run, ask y/n in the terminal, resume. Mark every write and undo tool as needing approval and leave the read-only ones free. Check the exact API against the installed version first, since it has changed between releases.
 - [ ] **System prompt and guardrails.** Move the server's instructions and the memory notes (for example, only playlisted tracks matter) into the agent's own prompt: load the libraries first, dry run before writing, restrict it to CueBridge's tools.

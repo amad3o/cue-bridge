@@ -6,6 +6,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from cuebridge import mcp_server as server
 from cuebridge.services.rekordbox import db as rd
 from cuebridge.services.rekordbox import db_library as dl
+from cuebridge.tools.cue_source import read_cue_source
 
 FIXTURE = Path(__file__).parent / "fixtures" / "rekordbox_sample.xml"
 
@@ -143,19 +144,19 @@ class TestSource:
         server.reset_state()
 
     def test_auto_prefers_the_database(self, with_database):
-        source = server._cue_source("auto")
+        source = read_cue_source("auto")
 
         assert not source.from_xml and "database" in source.label
         assert [c.timeMs for c in source.tracks[0].cues] == [10]
 
     def test_cues_left_out_are_explained(self, with_database):
-        assert "unusual slots" in " ".join(server._cue_source("database").notes)
+        assert "unusual slots" in " ".join(read_cue_source("database").notes)
 
     def test_auto_falls_back_to_the_loaded_xml_and_says_why(self, tmp_path, monkeypatch):
         server.reset_state()
         server.load_rekordbox_library(str(FIXTURE))
 
-        source = server._cue_source("auto")
+        source = read_cue_source("auto")
 
         server.reset_state()
         assert source.from_xml and "XML" in source.label
@@ -166,24 +167,24 @@ class TestSource:
         server.load_rekordbox_library(str(FIXTURE))
 
         with pytest.raises(ToolError, match="Could not read Rekordbox's database"):
-            server._cue_source("database")
+            read_cue_source("database")
 
         server.reset_state()
 
     def test_asking_for_the_xml_ignores_the_database(self, with_database):
         server.load_rekordbox_library(str(FIXTURE))
 
-        assert server._cue_source("xml").from_xml
+        assert read_cue_source("xml").from_xml
 
     def test_neither_source_is_a_clear_error(self):
         server.reset_state()
 
         with pytest.raises(ToolError, match="load_rekordbox_library"):
-            server._cue_source("auto")
+            read_cue_source("auto")
 
     def test_an_unknown_choice_is_refused(self):
         with pytest.raises(ToolError, match="cue_source"):
-            server._cue_source("both")
+            read_cue_source("both")
 
     def test_the_sync_dry_run_reports_where_the_cues_came_from(self, with_database):
         result = server.sync_cues_to_serato()

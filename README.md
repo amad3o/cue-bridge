@@ -139,5 +139,7 @@ backend/cuebridge/
     compare/       matching tracks, finding differences, the cue comparison, the three-way sync check
     reports/       searches and the read-only reports
     cues/          cue rules and timing
-  mcp_server.py    the MCP server (a thin layer over services/)
+  tools/           the MCP tools, one module per area: libraries, reports, playlists, repairs, cues, serato
+                   (common.py holds the server, the loaded-library state and the error translation)
+  mcp_server.py    the entry point: imports the tools (which registers them) and starts the server
 ```

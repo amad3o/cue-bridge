@@ -324,8 +324,9 @@ class TestTool:
 
     def test_every_report_runs(self, loaded):
         from cuebridge import mcp_server
+        from cuebridge.tools.reports import AUDIT_REPORTS
 
-        for report in mcp_server.AUDIT_REPORTS:
+        for report in AUDIT_REPORTS:
             out = mcp_server.audit_music_library(report)
 
             assert out["report"] == report and "Nothing was changed" in out["summary"]

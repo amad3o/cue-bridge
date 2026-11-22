@@ -1100,7 +1100,6 @@ class TestRelocationTools:
         server.reset_state()
         monkeypatch.setattr(rd, "default_backend", lambda: env["backend"])
         monkeypatch.setattr(rd, "find_database", lambda: env["db"])
-        monkeypatch.setattr(server, "_apple_path", None, raising=False)
         self.files = files
         yield
         server.reset_state()
