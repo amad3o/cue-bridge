@@ -9,8 +9,10 @@ from agents import Agent, ModelResponse, Usage, function_tool, set_tracing_disab
 from agents.mcp import MCPServerStdio
 from agents.models.interface import Model
 from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
+from rich.console import Console
 
 from cuebridge import agent as agent_module
+from cuebridge.agent_ui import TerminalUI
 
 set_tracing_disabled(True)
 
@@ -157,6 +159,44 @@ class TestTheApprovalGate:
         assert world.writes == [False]
 
 
+class TestWithTheTerminalUI:
+    """The same loop with the real UI attached (output captured): the look changes nothing about what is approved."""
+
+    @pytest.fixture
+    def ui(self):
+        return TerminalUI(Console(record=True, width=100, force_terminal=False))
+
+    def run(self, world, ui, *replies):
+        world.model = ScriptedModel(*replies)
+        agent = Agent(name="test", model=world.model, tools=world.tools)
+        return asyncio.run(agent_module.run_turn(agent, [{"role": "user", "content": "go"}], ui.ask, ui))
+
+    def test_each_tool_call_gets_a_line(self, world, ui, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda *a: "y")
+        self.run(world, ui, [call("look_at_thing", {}, "c1"), call("sync_thing", {"dry_run": True}, "c2")], [say("done")])
+
+        out = ui.console.export_text()
+        assert "→ look_at_thing()" in out
+        assert "✓ look_at_thing" in out
+        assert "→ sync_thing(dry_run=True)" in out
+        assert "Approval needed" not in out  # a dry run is not asked about
+
+    def test_a_real_change_shows_the_panel_and_runs_on_yes(self, world, ui, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda *a: "y")
+        self.run(world, ui, [call("sync_thing", {"dry_run": False, "note": "n"}, "c1")], [say("done")])
+
+        out = ui.console.export_text()
+        assert "Approval needed" in out
+        assert "This will really change something." in out
+        assert world.writes == [False]
+
+    def test_anything_but_yes_declines(self, world, ui, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda *a: "yes please")
+        self.run(world, ui, [call("sync_thing", {"dry_run": False}, "c1")], [say("ok")])
+
+        assert world.writes == []
+
+
 class TestIsRealChange:
     @pytest.mark.parametrize(
         ("arguments", "expected"),
@@ -226,18 +266,6 @@ class TestMalformedCalls:
         assert world.asked[0][1] is None
 
 
-class TestDescribeCall:
-    def test_lists_the_tool_and_every_argument(self):
-        text = agent_module.describe_call("sync_cues_to_serato", {"dry_run": False, "expected_files": 3})
-
-        assert "sync_cues_to_serato" in text
-        assert "dry_run = False" in text
-        assert "expected_files = 3" in text
-
-    def test_says_so_when_the_arguments_are_unreadable(self):
-        assert "could not be read" in agent_module.describe_call("sync_cues_to_serato", None)
-
-
 @pytest.fixture(scope="module")
 def server_tools():
     async def fetch():
@@ -281,4 +309,26 @@ class TestServerParams:
 
         assert params["args"] == ["-m", "cuebridge.mcp_server"]
         assert params["env"]["PYTHONPATH"] == str(agent_module.BACKEND_DIR)
+        assert params["env"]["CUEBRIDGE_LOG_LEVEL"] == "WARNING"
         assert (agent_module.BACKEND_DIR / "cuebridge" / "mcp_server.py").exists()
+
+    def test_the_server_quiets_its_logging_when_asked(self, monkeypatch):
+        import logging
+
+        from cuebridge import mcp_server
+
+        monkeypatch.setattr(mcp_server.mcp, "run", lambda: None)
+        root = logging.getLogger()
+        before = root.level
+
+        try:
+            monkeypatch.setenv("CUEBRIDGE_LOG_LEVEL", "error")
+            mcp_server.main()
+            assert root.level == logging.ERROR
+
+            root.setLevel(logging.INFO)
+            monkeypatch.delenv("CUEBRIDGE_LOG_LEVEL")
+            mcp_server.main()
+            assert root.level == logging.INFO  # unset leaves the library's default alone
+        finally:
+            root.setLevel(before)

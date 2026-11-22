@@ -7,6 +7,9 @@ them here registers them on the server. This module also re-exports the tool fun
 called directly as well as through MCP.
 """
 
+import logging
+import os
+
 from cuebridge.tools.common import mcp, reset_state
 from cuebridge.tools.cues import (
     duplicate_memory_cues_to_hot_cues,
@@ -50,6 +53,13 @@ from cuebridge.tools.serato import (
 
 
 def main() -> None:
+    # CUEBRIDGE_LOG_LEVEL quiets the server's own logging (the agent sets it); unset keeps the library's default.
+    # The library has already set up its handler when the server was built, so only the level is changed here.
+    level = os.environ.get("CUEBRIDGE_LOG_LEVEL")
+
+    if level:
+        logging.getLogger().setLevel(level.upper())
+
     mcp.run()
 
 

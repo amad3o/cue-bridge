@@ -9,16 +9,18 @@ the model: the model cannot skip it.
 """
 
 import asyncio
-import json
 import os
 import sys
 from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
 from agents import Agent, Runner, set_tracing_disabled
 from agents.mcp import MCPServerStdio
 from dotenv import load_dotenv
+
+from cuebridge.agent_ui import TerminalUI, parse_arguments
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 MAX_TURNS = 40
@@ -53,7 +55,8 @@ def server_params() -> dict[str, Any]:
     return {
         "command": sys.executable,
         "args": ["-m", "cuebridge.mcp_server"],
-        "env": {"PYTHONPATH": str(BACKEND_DIR)},
+        # The server logs every failed tool call at INFO, which would print over the chat.
+        "env": {"PYTHONPATH": str(BACKEND_DIR), "CUEBRIDGE_LOG_LEVEL": "WARNING"},
     }
 
 
@@ -73,17 +76,7 @@ async def needs_approval(_context: Any, _agent: Any, tool: Any) -> bool:
 def call_arguments(item: Any) -> dict[str, Any] | None:
     """The arguments of a pending tool call, as a dict (None if they cannot be read)."""
     raw = item.raw_item
-    arguments = raw.get("arguments") if isinstance(raw, dict) else getattr(raw, "arguments", None)
-
-    if isinstance(arguments, dict):
-        return arguments
-
-    try:
-        parsed = json.loads(arguments) if arguments else {}
-    except (TypeError, ValueError):
-        return None
-
-    return parsed if isinstance(parsed, dict) else None
+    return parse_arguments(raw.get("arguments") if isinstance(raw, dict) else getattr(raw, "arguments", None))
 
 
 def is_real_change(arguments: dict[str, Any] | None) -> bool:
@@ -99,25 +92,18 @@ def is_real_change(arguments: dict[str, Any] | None) -> bool:
     return arguments.get("dry_run", True) is not True
 
 
-def describe_call(tool_name: str, arguments: dict[str, Any] | None) -> str:
-    lines = [f"  {tool_name}"]
-    lines += [f"    {key} = {value!r}" for key, value in (arguments or {}).items()] or ["    (arguments could not be read)"]
-    return "\n".join(lines)
-
-
-async def ask_in_terminal(tool_name: str, arguments: dict[str, Any] | None) -> bool:
-    print(f"\nThe agent wants to make a real change:\n{describe_call(tool_name, arguments)}")
-    answer = await asyncio.to_thread(input, "Go ahead? [y/N] ")
-    return answer.strip().lower() in ("y", "yes")
-
-
-async def run_turn(agent: Agent, conversation: Any, ask: Ask = ask_in_terminal) -> Any:
+async def run_turn(agent: Agent, conversation: Any, ask: Ask, ui: TerminalUI | None = None) -> Any:
     """Run the agent until it answers, stopping for approval on each call that would really change something.
 
     `conversation` is the list of messages so far (it may end with the user's new message). Dry runs and
     read-only calls are approved here without asking; a refused call is reported to the model as refused.
+    With a `ui`, a spinner shows while the model and tools work, and each tool call gets a line.
     """
-    result = await Runner.run(agent, conversation, max_turns=MAX_TURNS)
+    thinking = ui.thinking if ui else nullcontext
+    hooks = ui.hooks() if ui else None
+
+    with thinking():
+        result = await Runner.run(agent, conversation, max_turns=MAX_TURNS, hooks=hooks)
 
     while result.interruptions:
         state = result.to_state()
@@ -131,7 +117,8 @@ async def run_turn(agent: Agent, conversation: Any, ask: Ask = ask_in_terminal) 
             else:
                 state.reject(item, rejection_message="The user declined this change. Nothing was changed.")
 
-        result = await Runner.run(agent, state, max_turns=MAX_TURNS)
+        with thinking():
+            result = await Runner.run(agent, state, max_turns=MAX_TURNS, hooks=hooks)
 
     return result
 
@@ -149,6 +136,13 @@ async def chat() -> None:
     # The SDK sends traces to OpenAI by default; the tool results hold the user's library, so keep them local.
     set_tracing_disabled(True)
 
+    try:
+        import readline  # noqa: F401  (importing it gives the prompt arrow-key history and line editing)
+    except ImportError:
+        pass
+
+    ui = TerminalUI()
+
     async with MCPServerStdio(
         params=server_params(),
         cache_tools_list=True,
@@ -156,21 +150,27 @@ async def chat() -> None:
         require_approval=needs_approval,
     ) as server:
         agent = build_agent(server)
+        tools = await server.list_tools()
+        ui.banner(len(tools), sum(tool_needs_approval(t) for t in tools))
         conversation: list[Any] = []
-        print("CueBridge agent. Ask about your library; an empty line or Ctrl-D quits.")
 
         while True:
             try:
-                line = (await asyncio.to_thread(input, "\nyou> ")).strip()
+                line = await asyncio.to_thread(ui.read_line)
             except EOFError:
                 break
 
             if not line:
                 break
 
-            result = await run_turn(agent, [*conversation, {"role": "user", "content": line}])
+            try:
+                result = await run_turn(agent, [*conversation, {"role": "user", "content": line}], ui.ask, ui)
+            except Exception as error:  # a failed model call or a turn limit should not end the chat; the question can be retried
+                ui.show_error(f"{type(error).__name__}: {error}")
+                continue
+
             conversation = result.to_input_list()
-            print(f"\n{result.final_output}")
+            ui.show_reply(result.final_output)
 
 
 def main() -> None:

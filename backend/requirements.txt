@@ -5,3 +5,4 @@ mcp>=2.3,<3
 mutagen>=1.47
 openai-agents>=0.25
 python-dotenv>=1.0
+rich>=13
