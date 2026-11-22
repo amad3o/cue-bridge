@@ -2,7 +2,7 @@
 VENV := backend/.venv
 PY := $(VENV)/bin/python
 
-.PHONY: help setup setup-db test lint check
+.PHONY: help setup setup-db test lint check agent
 
 help:
 	@echo "make setup     create backend/.venv and install the dependencies and dev tools"
@@ -10,6 +10,7 @@ help:
 	@echo "make test      run the tests"
 	@echo "make lint      run ruff"
 	@echo "make check     lint, then test (what CI runs)"
+	@echo "make agent     chat with CueBridge's own agent (needs OPENAI_API_KEY)"
 
 $(PY):
 	python3 -m venv $(VENV)
@@ -30,3 +31,6 @@ lint: $(PY)
 	cd backend && .venv/bin/ruff check cuebridge tests
 
 check: lint test
+
+agent: $(PY)
+	cd backend && .venv/bin/python -m cuebridge.agent
