@@ -2,7 +2,7 @@
 
 CueBridge is a local-first tool for managing a DJ library across **Apple Music**, **Rekordbox** and **Serato**. It's an **MCP server**, so an AI assistant such as Claude can read the libraries, compare them, and carefully make the changes that keep them in step. It is a personal tool, built around one setup: Apple Music holds the tracks and playlists, Rekordbox holds the cues and USB sets, and Serato plays from the Apple Music playlists.
 
-Everything runs on your own machine, and your library files are never uploaded anywhere.
+Everything runs on your own machine, and your library files are never uploaded anywhere. What an AI assistant sees is a different matter: the tools return track names, file paths, playlists and cues to whichever assistant is connected, so that data goes to that assistant's provider. That applies to Claude Code and Claude Desktop, and to the built-in agent below, which uses OpenAI.
 
 ## Status
 
@@ -11,12 +11,15 @@ Early development, used on one real library. What works today:
 - **Cues, Rekordbox to Serato.** Reads Rekordbox's cues from its live database (no export) and copies the hot and memory cues into the Serato tags of your MP3 and WAV files (both of Serato's cue frames, with the timing difference between the programs corrected), with Rekordbox winning, a journal and undo.
 - **Apple Music, live.** Reads tracks and playlists straight from the open Music app, with no export.
 - **Comparing the libraries.** Matches tracks across Apple Music and Rekordbox (by path, file name, then title and artist), and shows which tracks and playlists differ, which files moved, and which Apple Music files are listed twice.
+- **Comparing cues.** `compare_cues` is a read-only check of what Rekordbox and Serato hold per track: cues in only one of them, and differences in position, colour and name.
+- **Auditing the Apple Music library.** `audit_music_library` is read-only and reports duplicates, metadata gaps, playlist hygiene, formats and quality, missing files, and library questions.
 - **Playlists into Rekordbox.** Adds new tracks to your existing Rekordbox playlists by editing Rekordbox's database (Rekordbox closed; backup, verification and undo), and prepares new tracks and playlists for Rekordbox's XML import.
 - **Checking everything is in sync.** `check_sync_status` gives one read-only report across the three apps and names the tool that fixes each difference.
 - **Repairing Rekordbox after Apple Music renames files.** Repoints moved files, reports stale duplicate rows, and removes them while keeping their cues, each with a dry run, backup, verification and undo.
 - **Rekordbox XML.** Reads a Rekordbox export (tracks, cues, playlists). The only XML editing left is the playlist export, which refuses an export older than Rekordbox's database. Cue edits go to the database.
+- **Its own agent.** `make agent` opens a terminal chat (OpenAI Agents SDK) that uses all the tools, and asks you before anything is really changed. See [Or use the built-in agent](#or-use-the-built-in-agent).
 
-Not built yet: reading loops from Rekordbox's database (hot cues A to H and 17 colours are verified), the other colours, comparing cues between the programs, metadata and playlist-hygiene reports, and M4A/AIFF cue support. See [ROADMAP.md](ROADMAP.md) for completed work, known issues and what's next.
+Not built yet: Serato to Rekordbox cues, cue support for M4A, AIFF and FLAC files (they are skipped today), fixing tags inside the files, Serato crates, and a snapshot of the small important files. Loops on pads other than H and memory loops are still unchecked against Rekordbox. See [ROADMAP.md](ROADMAP.md) for completed work, known issues and what's next.
 
 ## Setup
 
@@ -54,6 +57,31 @@ claude mcp add --scope local cuebridge \
 ```
 
 Start a new session (or run `/mcp`) and `cuebridge` should show as connected. The server uses stdio, so any MCP client can run the same command: `python -m cuebridge.mcp_server` with `backend/` on `PYTHONPATH`. For example, Claude Desktop reads the same command, arguments and environment from its `mcpServers` config.
+
+### Or use the built-in agent
+
+CueBridge also has its own terminal chat, so you don't need Claude Code or Claude Desktop. It uses the [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/) and starts the same MCP server for you, so it has every tool above.
+
+1. Put your key in `backend/.env` (git ignores this file):
+
+   ```
+   OPENAI_API_KEY=sk-...
+   # CUEBRIDGE_MODEL=       optional; the SDK's default model is used if this is empty
+   ```
+
+   The repository is in Dropbox, which will sync that file. If that is not what you want, set `OPENAI_API_KEY` in your shell instead; the environment is read first.
+
+2. Start it from the repository root:
+
+   ```bash
+   make agent
+   ```
+
+   Type a request at the `you>` prompt (an empty line or Ctrl-D quits). Opening the Music app first lets it read your Apple Music library.
+
+**Approval.** Reading and dry runs go straight through. A call that would really change something (a writing tool with `dry_run=false`) stops and shows you the tool and its arguments, and runs only if you type `y`. That check is in `cuebridge/agent.py`, not in the model's hands, and anything unclear (for example, arguments it cannot read) is asked about too. If you refuse, nothing changes and the model is told so.
+
+**Privacy.** Every tool result the model needs (track names, file paths, playlists, cues) is sent to OpenAI. Tracing is switched off, because the SDK would otherwise send traces to OpenAI too. Your audio files and the libraries themselves stay on your machine. To keep library data off OpenAI's servers, use the MCP server with Claude instead, or leave the agent alone.
 
 ## Tools
 
@@ -139,6 +167,7 @@ backend/cuebridge/
     compare/       matching tracks, finding differences, the cue comparison, the three-way sync check
     reports/       searches and the read-only reports
     cues/          cue rules and timing
+  agent.py         the built-in terminal agent (OpenAI Agents SDK) and its approval gate
   tools/           the MCP tools, one module per area: libraries, reports, playlists, repairs, cues, serato
                    (common.py holds the server, the loaded-library state and the error translation)
   mcp_server.py    the entry point: imports the tools (which registers them) and starts the server
