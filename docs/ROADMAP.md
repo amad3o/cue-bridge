@@ -4,9 +4,9 @@ CueBridge is an **MCP server** that lets an AI assistant such as Claude read, co
 
 The parsing, matching and conversion logic stays in plain Python. The MCP server is a thin layer over it.
 
-**Audience and scope.** CueBridge is a personal tool, built around one library: Apple Music for tracks and playlists, Rekordbox for cues and USB sets, Serato for playing, with the music on an ExFAT drive. Claude Code is the usual MCP client, and a built-in terminal agent (`make agent`, section 10) uses the same tools. There is no UI and no plans for one, nor for packaging for other people unless that changes. A single user means the tools can assume this setup, but they should stay safe, because they touch real files: dry run first, a journal, verification, and undo.
+**Audience and scope.** CueBridge is a personal tool, built around one library: Apple Music for tracks and playlists, Rekordbox for cues and USB sets, Serato for playing, with the music on an ExFAT drive. Claude Code is the usual MCP client, and a built-in terminal agent (`make agent`, section 10) uses the same tools. There is no graphical or web UI and no plans for one (the terminal screen is the only screen), nor for packaging for other people unless that changes. A single user means the tools can assume this setup, but they should stay safe, because they touch real files: dry run first, a journal, verification, and undo.
 
-**Text first.** Every tool returns a clear text summary the assistant can show in chat, such as "12 tracks change, 31 cues added, 2 conflicts", with a short diff of the first few items. There is no UI.
+**Text first.** Every tool returns a clear text summary the assistant can show in chat, such as "12 tracks change, 31 cues added, 2 conflicts", with a short diff of the first few items. The agent's terminal screen only displays what the tools return.
 
 ## Where things stand
 
@@ -46,7 +46,7 @@ The loop that was the goal now works end to end with no manual export:
 - `check_sync_status` (`compare/sync_check.py`): one read-only report across Apple Music, Rekordbox and Serato, with each part reported as not checkable instead of failing.
 - The Rekordbox XML is edited as text (new lines only, original bytes untouched) for the playlist export, because Rekordbox rejects an XML library's rewrite of its file.
 - Pydantic models, root `.gitignore`, README rewritten around the MCP server.
-- 839 pytest tests (ruff clean) (a shared fixture keeps every test away from the real Rekordbox database): parsers, services, the Serato codecs and sync on mutagen-built files, the XML patcher, the database logic against a fake database (with mutation checks on the safeguards), and the tools, directly and through an in-memory MCP client.
+- 842 pytest tests (ruff clean), plus 32 vitest tests for the agent's screen (a shared fixture keeps every test away from the real Rekordbox database): parsers, services, the Serato codecs and sync on mutagen-built files, the XML patcher, the database logic against a fake database (with mutation checks on the safeguards), and the tools, directly and through an in-memory MCP client.
 
 ## Known issues
 
@@ -70,6 +70,7 @@ src/cuebridge/
     repairs.py, cues.py, serato.py, cue_source.py (where the cues come from)
   mcp_server.py          the entry point: imports the tools and starts the server
   paths.py               file:// locations to paths
+  agent/                 the built-in agent: runner.py (OpenAI Agents SDK, headless, the approval step), protocol.py (JSON lines with the screen)
   services/              path-based logic, grouped by app
     rekordbox/           parser.py (XML), service.py (validate, cache, pending-playlist note), db.py (the database), db_library.py (its cues as Track/Cue),
                          cue_writes.py (cues to the database), editor.py (safe XML writing), playlist_export.py (XML patcher)
@@ -78,7 +79,12 @@ src/cuebridge/
     compare/             track_matcher.py, drift.py, cue_compare.py, sync_check.py
     reports/             library_queries.py, library_audit.py, library_reports.py
     cues/                cue_rules.py, cue_timing.py
+src/ui/                  the agent's screen (Ink, TypeScript): App.tsx, components/, agent/ (connection.ts, protocol.ts), lib/ (state.ts, format.ts, markdown.ts)
+tests/                   mirrors src/cuebridge: agent/, apple_music/, rekordbox/, serato/, cues/, library/, server/; helpers/ and fixtures/
+docs/ROADMAP.md         this file
 ```
+
+Reorganized 2026-11-22: the project root is flat (`src/`, `tests/`, `docs/`, `pyproject.toml`, `Makefile`), dependencies live in `pyproject.toml` (extras `dev` and `rekordbox-db`; install with `pip install -e`), `parsers/` was folded into the services, and the screen moved to `src/ui/`.
 
 ### 2. Rekordbox XML tools
 
@@ -179,14 +185,15 @@ The database reader sees every track, playlist, cue and beat grid in the live co
 
 ### 10. Our own agent (instead of relying on Claude Code)
 
-**Paused 2026-11-21.** The agent works: it starts the server, runs the tools, and asks before any real change (tried live; 35 tests). Next up, in the order I would take them: the model-provider decision (it decides whether library data goes to OpenAI), the single copy of the system prompt, then cost and context control. The agent database and the evaluations (section 12) come after those.
+**Paused 2026-11-21 (screen restyled 2026-11-22).** The agent works: it starts the server, runs the tools, and asks before any real change (tried live; 35 tests). Next up, in the order I would take them: the model-provider decision (it decides whether library data goes to OpenAI), the single copy of the system prompt, then cost and context control. The agent database and the evaluations (section 12) come after those.
 
 Today the MCP client is Claude Code, so the conversation, the per-call approvals and the model loop all live in someone else's tool. The goal is to run CueBridge's own agent: a small program of ours that talks to the model and calls the same tools, so the behaviour, the prompts and the safety checks belong to this project. This would change the "Claude Code is the MCP client" assumption in the scope note at the top.
 
-- [x] **Decided the shape (2026-11-21):** the OpenAI Agents SDK for Python (`openai-agents`), not the JS one (the backend is Python, so no Node toolchain comes back after the front end's removal). It loads the existing MCP server over stdio with `MCPServerStdio` (`python -m cuebridge.mcp_server`, `PYTHONPATH=src`), so the 27 tools stay as they are. The loop is `Runner.run`, with a REPL on top for multi-turn chat.
+- [x] **Decided the shape (2026-11-21):** the OpenAI Agents SDK for Python (`openai-agents`), not the JS one (the backend is Python, so no Node toolchain comes back after the front end's removal; the Ink screen later brought Node back, for the screen only). It loads the existing MCP server over stdio with `MCPServerStdio` (`python -m cuebridge.mcp_server`, `PYTHONPATH=src`), so the 27 tools stay as they are. The loop is `Runner.run`, with a REPL on top for multi-turn chat.
 - [x] **Entry point** (2026-11-21): `src/cuebridge/agent.py` (now `agent/runner.py`), `make agent`, `openai-agents` in the dependencies. A terminal chat loop that starts the MCP server over stdio. Tracing is switched off (the SDK sends traces to OpenAI by default), and `CUEBRIDGE_MODEL` picks the model.
 - [x] **Own approval step for destructive tools** (2026-11-21; tried live with `load_apple_music_library` and a `sync_cues_to_serato` dry run, and the refusal and real-write paths are covered by the tests). The dry run is shown and the user confirms before `dry_run=false`, enforced by our code rather than Claude Code's per-call prompt (this also answers the weakness noted in section 5). Use the SDK's tool-approval mechanism for MCP servers: pause the run, ask y/n in the terminal, resume. Mark every write and undo tool as needing approval and leave the read-only ones free. Check the exact API against the installed version first, since it has changed between releases.
-- [x] **Terminal look, now Ink** (2026-11-22): the screen is an Ink app in `src/ui/` (React and TypeScript; `make agent` runs it) that starts the Python agent as a child process. `agent.py` is headless and speaks JSON lines with the screen (`agent_protocol.py`: `ready`, `thinking`, `tool_start`, `tool_end`, `approval_request`, `reply`, `error` out; `user_message`, `approval_response`, `quit` in). The approval stays in Python: only a matching id with a real `approve: true` goes ahead, and a closed screen, a stale id or a malformed line is a refusal. `agent_ui.py`, its tests and the `rich` requirement were removed. Python: 842 tests (`test_agent_protocol.py` and the protocol cases in `test_agent.py`); screen: 29 vitest tests (events to state, the approval keys, the panel). Tried live in a pseudo-terminal against the real agent and MCP server (27 tools, 14 gated). Node is now a second toolchain (Node 20+; `node_modules` is kept out of Dropbox with `make setup-ui`). The earlier `rich` version (2026-11-21) is in git history.
+- [x] **Terminal look, now Ink** (2026-11-22): the screen is an Ink app in `src/ui/` (React and TypeScript; `make agent` runs it) that starts the Python agent as a child process. `agent/runner.py` is headless and speaks JSON lines with the screen (`agent/protocol.py`: `ready`, `thinking`, `tool_start`, `tool_end`, `approval_request`, `reply`, `error` out; `user_message`, `approval_response`, `quit` in). The approval stays in Python: only a matching id with a real `approve: true` goes ahead, and a closed screen, a stale id or a malformed line is a refusal. `agent_ui.py`, its tests and the `rich` requirement were removed. Python: 842 tests (`tests/agent/test_agent_protocol.py` and the protocol cases in `test_agent.py`); screen: 29 vitest tests at the time (events to state, the approval keys, the panel). Tried live in a pseudo-terminal against the real agent and MCP server (27 tools, 14 gated). Node is now a second toolchain (Node 20+; `node_modules` is kept out of Dropbox with `make setup-ui`). The earlier `rich` version (2026-11-21) is in git history.
+- [x] **Screen restyled after agents-v2** (2026-11-22): magenta header, `› You` and `› Assistant` labels, `⚡ tool ✓` rows, and a `>` prompt with a block cursor. Approval is now a Yes / No selector that starts on No, so Enter alone refuses; arrows and Enter choose, `y` approves, any other key is a no, and a closed screen is still a no (tests for each; 32 screen tests). Typing `exit` quits. The token-usage bar was left out (the agent does not report tokens yet; see cost and context control below).
 - [ ] **System prompt and guardrails.** A first version is in `agent/runner.py` (`INSTRUCTIONS`: load first, only playlisted tracks, dry run before writing, undo). Still to do: keep it in step with the server's instructions (there are now two copies), and restrict the agent to CueBridge's tools. Original aim: move the server's instructions and the memory notes (for example, only playlisted tracks matter) into the agent's own prompt: load the libraries first, dry run before writing, restrict it to CueBridge's tools.
 - [x] **Docs** (2026-11-21): README (setup, `.env`, `make agent`, the approval and the privacy note) and the scope note at the top.
 - [ ] **Decide the model provider.** The SDK defaults to OpenAI, so every tool result (track names, file paths, playlists) goes to OpenAI's API, which cuts against the local-first stance in the README. Either accept that, or use another provider through the SDK's LiteLLM support (including Claude).
@@ -312,6 +319,9 @@ Where we paused (2026-11-06): the library is fully in sync (Apple Music, Rekordb
 3. **`.aif` cues.** One playlisted track is skipped because the Serato writer doesn't handle AIFF.
 4. ~~Drop the XML for the cue tools~~ Done 2026-11-18. The playlist export stays on XML (a stale-export guard was added).
 5. ~~The cue comparison, the housekeeping and the metadata reports~~ Done 2026-11-18.
-6. **Our own agent** (section 10): pick the SDK or raw API, then a terminal loop with our own dry-run approval step.
+6. ~~Our own agent~~ Built (section 10): the SDK, a headless Python agent with its own approval step, and an Ink screen. Still open there: the model-provider decision, one copy of the system prompt, and cost and context control.
+7. **Automatic beatgrids** (section 13): start with the read-only analyzer, then the Rekordbox and Serato writers.
+
+Housekeeping: the repo lives in Dropbox, which has several times replaced `Makefile`, `README.md` and `.gitignore` with "conflicted copy" files after a stale delete from another synced copy (`git checkout -- <file>` restores them). Moving the repo out of Dropbox (for example `~/code/cue-bridge`, then rebuilding `.venv` and `src/ui/node_modules` and re-registering the MCP server) would stop it. Not decided yet.
 
 Left alone on purpose: the Rekordbox-only playlist `Trial playlist - Cloud Library Sync`.
