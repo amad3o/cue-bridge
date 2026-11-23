@@ -19,12 +19,14 @@ $(PY):
 	$(PY) -m pip install --upgrade pip
 
 setup: $(PY)
-	$(PY) -m pip install -r requirements-dev.txt
+	$(PY) -m pip install -e ".[dev]"
+	# keep the virtualenv out of Dropbox: it is large, regenerable and slow to sync
+	xattr -w com.dropbox.ignored 1 $(VENV) 2>/dev/null || true
 
 setup-db: setup
 	CFLAGS="-I$$(brew --prefix sqlcipher)/include -I$$(brew --prefix sqlcipher)/include/sqlcipher" \
 	LDFLAGS="-L$$(brew --prefix sqlcipher)/lib" SQLCIPHER_PATH="$$(brew --prefix sqlcipher)" \
-	$(PY) -m pip install -r requirements-rekordbox-db.txt
+	$(PY) -m pip install -e ".[rekordbox-db]"
 
 setup-ui:
 	cd ui && npm install
@@ -45,6 +47,6 @@ lint: $(PY)
 
 check: lint test test-ui
 
-# The Ink screen starts the Python agent (src/cuebridge/agent.py) as a child process.
+# The Ink screen starts the Python agent (src/cuebridge/agent/) as a child process.
 agent: $(PY) ui/node_modules
 	cd ui && npm start --silent

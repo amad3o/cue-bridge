@@ -22,7 +22,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from cuebridge.parsers.serato_tags import UnsupportedFileError, read_first_beat
+from cuebridge.services.serato.tags import UnsupportedFileError, read_first_beat
 
 # Serato's position = Rekordbox's position - this.
 MP3_OFFSET_MS = 5.5

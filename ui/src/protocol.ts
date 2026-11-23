@@ -1,5 +1,5 @@
 // The conversation with the Python agent: one JSON object per line. The full description is in
-// src/cuebridge/agent_protocol.py. The screen only displays things and sends back what the user typed.
+// src/cuebridge/agent/protocol.py. The screen only displays things and sends back what the user typed.
 
 export type Args = Record<string, unknown> | null;
 

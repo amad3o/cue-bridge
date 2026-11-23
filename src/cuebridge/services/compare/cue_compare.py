@@ -15,11 +15,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from cuebridge.models import Track
-from cuebridge.parsers.serato_markers import CueEntry, MarkersError
-from cuebridge.parsers.serato_tags import UnsupportedFileError, read_markers2
 from cuebridge.services.cues.cue_timing import refine_with_beat_grids, timing_offset
 from cuebridge.services.reports.library_queries import format_time
 from cuebridge.services.serato import sync as serato_sync
+from cuebridge.services.serato.markers import CueEntry, MarkersError
+from cuebridge.services.serato.tags import UnsupportedFileError, read_markers2
 
 # What a difference is.
 MISSING_IN_SERATO = "missing_in_serato"  # Rekordbox has the cue, Serato's slot is empty

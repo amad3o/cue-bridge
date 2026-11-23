@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from cuebridge.models import Track
-from cuebridge.parsers.rekordbox_parser import (
+from cuebridge.services.rekordbox.parser import (
     RekordboxParseError,
     RekordboxPlaylist,
     parse_rekordbox_playlists,

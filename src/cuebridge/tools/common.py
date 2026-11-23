@@ -8,8 +8,8 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from cuebridge.parsers.apple_music_xml import MusicLibrary
 from cuebridge.services.apple_music.service import get_apple_music_library
+from cuebridge.services.apple_music.xml_parser import MusicLibrary
 from cuebridge.services.compare import drift
 from cuebridge.services.rekordbox import db as rekordbox_db
 from cuebridge.services.rekordbox.service import LibraryError, RekordboxLibrary, get_rekordbox_library

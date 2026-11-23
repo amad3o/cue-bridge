@@ -23,8 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote
 
-from cuebridge.parsers.apple_music_xml import MusicLibrary, MusicTrack
-from cuebridge.parsers.rekordbox_parser import parse_rekordbox_playlists
+from cuebridge.services.apple_music.xml_parser import MusicLibrary, MusicTrack
 from cuebridge.services.compare.drift import LibraryDrift
 from cuebridge.services.rekordbox.editor import (
     EditTarget,
@@ -33,6 +32,7 @@ from cuebridge.services.rekordbox.editor import (
     _replace_atomically,
     resolve_target,
 )
+from cuebridge.services.rekordbox.parser import parse_rekordbox_playlists
 from cuebridge.services.rekordbox.service import (
     PENDING_TRACK_ID_BASE,
     LibraryError,

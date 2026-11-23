@@ -3,6 +3,29 @@ name = "cuebridge"
 version = "0.1.0"
 description = "An MCP server that reads, compares and converts DJ cue points between Rekordbox and Serato."
 requires-python = ">=3.10"
+# Direct dependencies only; pip resolves the rest.
+# mcp 2.x renamed FastMCP to MCPServer, so stay below 3 until that's reviewed.
+dependencies = [
+    "pydantic>=2.13",
+    "mcp>=2.3,<3",
+    "mutagen>=1.47",
+    "openai-agents>=0.25",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx", "ruff>=0.15"]
+# Needed only for sync_playlists_to_rekordbox / undo_rekordbox_playlist_sync, which read and edit Rekordbox's own
+# database. SQLCipher must be installed first (see `make setup-db`).
+rekordbox-db = ["pyrekordbox>=0.5", "sqlcipher3>=0.6"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 
 [tool.ruff]
 line-length = 160

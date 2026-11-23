@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable
 
-from cuebridge.parsers.apple_music_xml import MusicLibrary, MusicTrack
+from cuebridge.services.apple_music.xml_parser import MusicLibrary, MusicTrack
 from cuebridge.services.reports.library_queries import format_time
 
 LOSSLESS_WORDS = ("wav", "aiff", "aif", "lossless", "flac", "alac")

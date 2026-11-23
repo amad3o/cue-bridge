@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import PurePath
 
 from cuebridge.models import Track
-from cuebridge.parsers.apple_music_xml import MusicLibrary, MusicTrack
+from cuebridge.services.apple_music.xml_parser import MusicLibrary, MusicTrack
 
 DURATION_TOLERANCE_MS = 2000  # Rekordbox stores whole seconds
 

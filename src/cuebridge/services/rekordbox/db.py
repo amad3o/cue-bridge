@@ -37,10 +37,10 @@ from pathlib import Path
 from typing import Protocol
 
 from cuebridge.models import Track
-from cuebridge.parsers.apple_music_xml import MusicLibrary
-from cuebridge.parsers.rekordbox_parser import RekordboxPlaylist
+from cuebridge.services.apple_music.xml_parser import MusicLibrary
 from cuebridge.services.compare import drift
 from cuebridge.services.compare.track_matcher import normalize_path
+from cuebridge.services.rekordbox.parser import RekordboxPlaylist
 from cuebridge.services.rekordbox.service import LibraryError
 from cuebridge.services.reports import library_reports
 

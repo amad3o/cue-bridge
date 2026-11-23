@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from cuebridge.models import Track
-from cuebridge.parsers.apple_music_xml import MusicLibrary, MusicTrack
+from cuebridge.services.apple_music.xml_parser import MusicLibrary, MusicTrack
 from cuebridge.services.compare.track_matcher import AppleMusicIndex, MatchResult, normalize_path
 
 

@@ -1,7 +1,0 @@
-# Direct dependencies only; pip resolves the rest.
-# mcp 2.x renamed FastMCP to MCPServer, so stay below 3 until that's reviewed.
-pydantic>=2.13
-mcp>=2.3,<3
-mutagen>=1.47
-openai-agents>=0.25
-python-dotenv>=1.0

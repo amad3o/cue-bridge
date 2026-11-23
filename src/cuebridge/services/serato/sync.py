@@ -29,7 +29,11 @@ from datetime import datetime
 from pathlib import Path
 
 from cuebridge.models import Track
-from cuebridge.parsers.serato_markers import (
+from cuebridge.services.cues.cue_rules import MAX_HOT_CUE_SLOTS, plan_memory_to_hot
+from cuebridge.services.cues.cue_timing import TimingOffset, refine_with_beat_grids, timing_offset, to_serato_ms
+from cuebridge.services.rekordbox.service import LibraryError
+from cuebridge.services.reports.library_queries import format_time
+from cuebridge.services.serato.markers import (
     DESCRIPTION,
     LEGACY_DESCRIPTION,
     CueEntry,
@@ -39,17 +43,13 @@ from cuebridge.parsers.serato_markers import (
     encode_markers2,
     replace_cues,
 )
-from cuebridge.parsers.serato_tags import (
+from cuebridge.services.serato.tags import (
     Markers2Location,
     UnsupportedFileError,
     locate_frame,
     locate_legacy_markers,
     locate_markers2,
 )
-from cuebridge.services.cues.cue_rules import MAX_HOT_CUE_SLOTS, plan_memory_to_hot
-from cuebridge.services.cues.cue_timing import TimingOffset, refine_with_beat_grids, timing_offset, to_serato_ms
-from cuebridge.services.rekordbox.service import LibraryError
-from cuebridge.services.reports.library_queries import format_time
 
 # Rekordbox exports this green (40, 226, 20) on every hot cue nobody has recolored,
 # so it says nothing about the color the user wants in Serato.

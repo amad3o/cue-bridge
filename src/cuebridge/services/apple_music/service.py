@@ -5,7 +5,7 @@ import threading
 from collections import OrderedDict
 from pathlib import Path
 
-from cuebridge.parsers.apple_music_xml import AppleMusicParseError, MusicLibrary, parse_apple_music_plist
+from cuebridge.services.apple_music.xml_parser import AppleMusicParseError, MusicLibrary, parse_apple_music_plist
 from cuebridge.services.rekordbox.service import InvalidFileError, check_size
 
 MAX_CACHED_LIBRARIES = 2

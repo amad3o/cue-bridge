@@ -19,7 +19,7 @@ Early development, used on one real library. What works today:
 - **Rekordbox XML.** Reads a Rekordbox export (tracks, cues, playlists). The only XML editing left is the playlist export, which refuses an export older than Rekordbox's database. Cue edits go to the database.
 - **Its own agent.** `make agent` opens a terminal chat (OpenAI Agents SDK) that uses all the tools, and asks you before anything is really changed. See [Or use the built-in agent](#or-use-the-built-in-agent).
 
-Not built yet: Serato to Rekordbox cues, cue support for M4A, AIFF and FLAC files (they are skipped today), fixing tags inside the files, Serato crates, and a snapshot of the small important files. Loops on pads other than H and memory loops are still unchecked against Rekordbox. See [ROADMAP.md](ROADMAP.md) for completed work, known issues and what's next.
+Not built yet: Serato to Rekordbox cues, cue support for M4A, AIFF and FLAC files (they are skipped today), fixing tags inside the files, Serato crates, and a snapshot of the small important files. Loops on pads other than H and memory loops are still unchecked against Rekordbox. See [ROADMAP.md](docs/ROADMAP.md) for completed work, known issues and what's next.
 
 ## Setup
 
@@ -38,11 +38,11 @@ Or by hand:
 # from the repo root
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements-dev.txt
+pip install -e ".[dev]"
 pytest                      # optional: run the tests
 ```
 
-`make setup-db` also installs the optional Rekordbox database packages (it needs `brew install sqlcipher` first; see [Updating Rekordbox playlists directly](#updating-rekordbox-playlists-directly)).
+`make setup-db` also installs the optional Rekordbox database packages (the `rekordbox-db` extra in `pyproject.toml`) (it needs `brew install sqlcipher` first; see [Updating Rekordbox playlists directly](#updating-rekordbox-playlists-directly)).
 
 ### Export your Rekordbox library
 
@@ -62,7 +62,7 @@ Start a new session (or run `/mcp`) and `cuebridge` should show as connected. Th
 
 ### Or use the built-in agent
 
-CueBridge also has its own terminal chat, so you don't need Claude Code or Claude Desktop. The screen is an [Ink](https://github.com/vadimdemedes/ink) app (`ui/`). It starts the Python agent (`src/cuebridge/agent.py`, built on the [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)), which starts the same MCP server, so it has every tool above. The two talk over stdin and stdout, one JSON object per line (described at the top of `src/cuebridge/agent_protocol.py`).
+CueBridge also has its own terminal chat, so you don't need Claude Code or Claude Desktop. The screen is an [Ink](https://github.com/vadimdemedes/ink) app (`ui/`). It starts the Python agent (`src/cuebridge/agent/`, built on the [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)), which starts the same MCP server, so it has every tool above. The two talk over stdin and stdout, one JSON object per line (described at the top of `src/cuebridge/agent/protocol.py`).
 
 1. Put your key in `.env` (git ignores this file):
 
@@ -81,7 +81,7 @@ CueBridge also has its own terminal chat, so you don't need Claude Code or Claud
 
    Type a request at the `you>` prompt (an empty line or Ctrl-D quits; the up arrow recalls earlier requests). Opening the Music app first lets it read your Apple Music library. While it works you see a spinner and a line for each tool it calls (`→ name(arguments)`, then `✓` with the time, or a red `✗` with the reason if the tool failed). Replies are shown as formatted markdown.
 
-**Approval.** Reading and dry runs go straight through. A call that would really change something (a writing tool with `dry_run=false`) stops and shows a red panel with the tool and its arguments, and runs only if you press `y`. Any other key is a no. That check is in `src/cuebridge/agent.py`, not in the model's hands and not in the screen's: the screen can only answer, and a wrong id, a malformed answer, anything but a real `true`, or the screen closing all count as a no. Anything unclear (for example, arguments it cannot read) is asked about too. If you refuse, nothing changes and the model is told so.
+**Approval.** Reading and dry runs go straight through. A call that would really change something (a writing tool with `dry_run=false`) stops and shows a red panel with the tool and its arguments, and runs only if you press `y`. Any other key is a no. That check is in `src/cuebridge/agent/runner.py`, not in the model's hands and not in the screen's: the screen can only answer, and a wrong id, a malformed answer, anything but a real `true`, or the screen closing all count as a no. Anything unclear (for example, arguments it cannot read) is asked about too. If you refuse, nothing changes and the model is told so.
 
 **Privacy.** Every tool result the model needs (track names, file paths, playlists, cues) is sent to OpenAI. Tracing is switched off, because the SDK would otherwise send traces to OpenAI too. Your audio files and the libraries themselves stay on your machine. To keep library data off OpenAI's servers, use the MCP server with Claude instead, or leave the agent alone.
 
@@ -153,7 +153,7 @@ These tools **write to Rekordbox's own database** (`master.db`), like the playli
 ```bash
 # from the repo root
 pytest                        # all tests
-pytest tests/test_mcp_server.py::TestSetDefaultCue   # one class
+pytest tests/server/test_mcp_server.py::TestSetDefaultCue   # one class
 ```
 
 Layout:
@@ -161,18 +161,20 @@ Layout:
 ```
 src/cuebridge/
   models.py        shared Pydantic models (Track, Cue)
-  parsers/         file formats to models (Rekordbox XML, Apple Music XML, Serato tags)
+  paths.py         file:// locations to paths
   services/        the logic, grouped by app:
-    rekordbox/     loading and caching, the live database (reading, writing, adding cues, its cues as Track/Cue), the playlist export's XML writing
-    apple_music/   reading Apple Music, live from the app or from a file
-    serato/        the cue sync into Serato's tags
+    rekordbox/     the XML parser, loading and caching, the live database (reading, writing, adding cues, its cues as Track/Cue), the playlist export's XML writing
+    apple_music/   reading Apple Music, live from the app or from a file, and its XML parser
+    serato/        the tag and marker codecs, and the cue sync into Serato's tags
     compare/       matching tracks, finding differences, the cue comparison, the three-way sync check
     reports/       searches and the read-only reports
     cues/          cue rules and timing
-  agent.py         the built-in agent (OpenAI Agents SDK), headless, and its approval gate
-  agent_protocol.py  the JSON-lines conversation with the screen (events out, messages in)
+  agent/           the built-in agent: runner.py (OpenAI Agents SDK, headless, and its approval gate),
+                   protocol.py (the JSON-lines conversation with the screen)
   tools/           the MCP tools, one module per area: libraries, reports, playlists, repairs, cues, serato
                    (common.py holds the server, the loaded-library state and the error translation)
   mcp_server.py    the entry point: imports the tools (which registers them) and starts the server
+tests/             mirrors the above: agent/, apple_music/, rekordbox/, serato/, cues/, library/, server/; helpers/ and fixtures/
+docs/ROADMAP.md    completed work, known issues and what's next
 ui/                the agent's screen (Ink, TypeScript): src/App.tsx, state.ts (events to what is shown), agent.ts (starts the Python agent)
 ```

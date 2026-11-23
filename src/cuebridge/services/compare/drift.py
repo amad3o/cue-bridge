@@ -11,9 +11,9 @@ import unicodedata
 from dataclasses import dataclass, field
 
 from cuebridge.models import Track
-from cuebridge.parsers.apple_music_xml import MusicLibrary, MusicPlaylist, MusicTrack
-from cuebridge.parsers.rekordbox_parser import RekordboxPlaylist
+from cuebridge.services.apple_music.xml_parser import MusicLibrary, MusicPlaylist, MusicTrack
 from cuebridge.services.compare.track_matcher import AppleMusicIndex, normalize_path
+from cuebridge.services.rekordbox.parser import RekordboxPlaylist
 
 # Rekordbox keeps an empty playlist of this name for its own use.
 IGNORED_REKORDBOX_PLAYLISTS = {"cue analysis playlist"}
