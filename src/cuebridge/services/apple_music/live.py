@@ -14,8 +14,8 @@ playlist folders and the Music folder aren't exposed (the folder is inferred).
 import json
 import os
 import subprocess
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable
 
 from cuebridge.services.apple_music.xml_parser import MusicLibrary, MusicPlaylist, MusicTrack
 from cuebridge.services.rekordbox.service import LibraryError

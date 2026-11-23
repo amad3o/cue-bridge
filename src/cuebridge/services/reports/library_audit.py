@@ -12,9 +12,9 @@ whole library, because "which tracks are in no playlist" and "what was added rec
 import os
 import re
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Callable
 
 from cuebridge.services.apple_music.xml_parser import MusicLibrary, MusicTrack
 from cuebridge.services.reports.library_queries import format_time

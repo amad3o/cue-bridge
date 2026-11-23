@@ -2,8 +2,8 @@
 
 import os
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from cuebridge.models import Track
 from cuebridge.services.apple_music.xml_parser import MusicLibrary, MusicTrack

@@ -19,9 +19,9 @@ How the database stores a cue (`djmdCue`):
 The first beat comes from the beat grid in the track's analysis file.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from cuebridge.models import Cue, Track
 from cuebridge.services.rekordbox.db import DbCue, DbSnapshot

@@ -94,7 +94,7 @@ def _parse_cue(payload: bytes) -> Entry:
         cue = CueEntry(
             index=payload[1],
             position_ms=struct.unpack(">I", payload[2:6])[0],
-            color="#%02x%02x%02x" % tuple(payload[7:10]),
+            color="#{:02x}{:02x}{:02x}".format(*payload[7:10]),
             name=payload[12:-1].decode("utf-8"),
         )
     except (MarkersError, UnicodeDecodeError):
@@ -256,7 +256,7 @@ def decode_legacy_cues(data: bytes) -> list[CueEntry]:
         entry = data[6 + slot * _LEGACY_ENTRY : 6 + (slot + 1) * _LEGACY_ENTRY]
 
         if entry[-2] == 1:
-            cues.append(CueEntry(slot, _unpack7(entry[:5]), "#%06x" % _unpack7(entry[16:20])))
+            cues.append(CueEntry(slot, _unpack7(entry[:5]), f"#{_unpack7(entry[16:20]):06x}"))
 
     return cues
 

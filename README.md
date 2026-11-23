@@ -42,7 +42,7 @@ pip install -e ".[dev]"
 pytest                      # optional: run the tests
 ```
 
-`make setup-db` also installs the optional Rekordbox database packages (the `rekordbox-db` extra in `pyproject.toml`) (it needs `brew install sqlcipher` first; see [Updating Rekordbox playlists directly](#updating-rekordbox-playlists-directly)).
+`make setup-db` also installs the optional Rekordbox database packages (the `rekordbox-db` extra in `pyproject.toml`; it needs `brew install sqlcipher` first; see [Updating Rekordbox playlists directly](#updating-rekordbox-playlists-directly)).
 
 ### Export your Rekordbox library
 
