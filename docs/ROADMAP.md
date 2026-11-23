@@ -290,6 +290,17 @@ Method: BPM from a tempogram inside a sane range (about 70 to 180, to avoid half
 - [ ] **4. Agent and docs.** Register the tools, gate the writers behind the approval step, update the README, and add evaluation cases.
 - [ ] **5. Cue points (after the grids).** First downbeat as hot cue A and phrase starts (every 16 or 32 bars) are reliable once the grid is right. Energy-based intro, drop and outro guesses are optional and would be labelled as guesses.
 
+### 14. Group the tools? (undecided)
+
+Idea (2026-11-22): the server has 27 tools. Could some be grouped into tools that cover many, so the model sees a shorter list and common jobs have one entry point? Not decided; waiting on which jobs get repeated most.
+
+- [ ] **? Merge the seven `undo_*` tools into one `undo(kind)`.** They all reverse a journal. The safest merge: removes six tools, and the approval gate is unaffected (every undo is a write).
+- [ ] **? Workflow tools** for jobs done repeatedly, for example `sync_everything` (check status, plan, apply) or `repair_library` (moved files, then stale duplicates). Each real change inside one must still show its dry run and ask first; a bundle must not run through unattended.
+- [ ] **? Specialist agents with handoffs** (Rekordbox, Serato, audit) in the agent, so each sees only its own tools. Server tools and their safety annotations stay as they are. Worth it mainly once the beatgrid tools (section 13) lengthen the list.
+- [ ] **? One tool per area with an `action` argument** (for example `rekordbox_cues(action=...)`), about 8 tools instead of 27. Leaning against: the agent's approval gate depends on each tool being read-only or not, so reads and writes would have to stay separate, and the argument schemas and the `dry_run` check get looser.
+
+Constraint for any of these: keep read-only and writing behaviour in separate tools, and keep `dry_run` defaulting to true, so the approval gate and its tests still hold.
+
 ### Not yet verified
 
 Built and tested in code, but never checked in the real application. Most need the user, because only they can run Rekordbox and Serato.
