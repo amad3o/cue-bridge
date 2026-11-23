@@ -148,6 +148,70 @@ These tools **write to Rekordbox's own database** (`master.db`), like the playli
 
 > Report stale duplicates in Rekordbox, then clean them up. (Dry run first; Rekordbox must be closed to apply.)
 
+## Design
+
+### Principles
+
+- **Local-first.** Everything runs on your machine and reads your files where they are. What leaves it is whatever the connected assistant is shown (for the built-in agent, see its Privacy note under [Or use the built-in agent](#or-use-the-built-in-agent)).
+- **Read live, copy nothing.** Apple Music, Rekordbox and Serato are read directly (the Music app through a read-only script, Rekordbox's `master.db`, Serato's tags in the audio files). CueBridge keeps no copy of your library, so there is nothing to fall out of date. The Rekordbox XML export is only a fallback, and what the playlist export edits.
+- **One owner per fact.** Apple Music owns tracks and playlists, Rekordbox owns cues, Serato is where you play. The tools move each fact one way, from its owner to the others, and `check_sync_status` reports where that has not happened yet.
+- **Only playlisted tracks matter.** Apple Music tracks in no playlist are counted and ignored when comparing or transferring to Rekordbox.
+- **Text first.** Every tool returns a short summary with a few examples, paged (at most 100 per call), so a large library does not flood the assistant's context.
+
+### Layers
+
+```
+ Claude Code / Claude Desktop            make agent
+        |  MCP over stdio                  Ink screen (src/ui)  <-- JSON lines -->  agent (src/cuebridge/agent)
+        v                                                                                  |
+   MCP server  ------------------------------------ MCP over stdio -----------------------+
+   src/cuebridge/tools        thin: check input, call a service, format the answer
+        |
+   src/cuebridge/services     the logic, one folder per app (rekordbox, apple_music, serato) plus compare, reports, cues
+        |
+   parsers and codecs         files to plain models (Rekordbox XML, Apple Music XML, Serato Markers2 and BeatGrid)
+        |
+   your files:  master.db   Music app   audio files' tags
+```
+
+The tools hold no logic, so the same code serves the MCP server and the agent, and the services can be tested without a server. Shared state (the loaded libraries) lives in one place, `tools/common.py`.
+
+### How writes are kept safe
+
+Every tool that changes something (14 of them) follows the same pattern, so the habits carry over between them:
+
+1. **Dry run by default.** `dry_run=true` reports what would change and writes nothing.
+2. **A guard from the dry run.** Applying needs `dry_run=false` plus the count (or file list) the dry run reported, and is refused if the library changed in between.
+3. **The other app is closed.** Rekordbox and Serato must not be running while their files are edited.
+4. **Backup, then verify.** The database or tag is backed up first, and the backup is checked.
+5. **A journal written before the change**, so an interrupted run can still be undone.
+6. **Read back after writing.** If anything other than the planned change differs, the backup is put back.
+7. **An undo tool** for each writer that reverses exactly what the journal recorded.
+
+Writers also change only what differs (a re-run finds nothing to do), and Serato's tags are edited in place, byte for byte, with the codecs checked to round-trip all the real tags they were built against.
+
+### Matching tracks and timing
+
+- **Matching** tries the file path, then the file name, then title and artist with duration. It never guesses between equal candidates: an unclear match is reported, not applied.
+- **Timing.** Rekordbox and Serato place a cue at slightly different times in MP3s, depending on the file's headers (WAV 0 ms; MP3 with a LAME header about -5.5 ms; MP3 with an Xing/Info frame but no LAME tag, estimated from the two beat grids in whole MP3 frames). The cue sync corrects for that per file.
+
+### The agent
+
+The built-in agent is split in two on purpose. The **Python agent** (OpenAI Agents SDK) owns the model, the tools and the approval rule. The **Ink screen** (React and TypeScript) only draws the chat and sends back what you type and answer, over one JSON object per line on stdin and stdout.
+
+The approval rule lives in Python because the screen must not be able to approve anything on its own: only a matching request id with a real `approve: true` goes ahead, and a closed screen, a stale id, a malformed line or any other key is a refusal. Reads and dry runs go through without asking, and a real change always stops for you. This is a second check on top of the server's own dry-run guard, not a replacement for it.
+
+### Tests
+
+The tests are built so they cannot touch your real data. A shared fixture keeps every test away from the real Rekordbox database, the database logic runs against a fake backend, and Serato code runs on audio files built with mutagen. The safeguards were mutation-checked (removing a guard has to fail a test), and the agent is driven by a scripted model with stand-in tools. `tests/` mirrors `src/cuebridge`.
+
+### Decisions worth knowing
+
+- **An MCP server, not a UI.** The assistant is the interface, so there is nothing to keep in sync with a second front end. The earlier web front end was removed.
+- **The database, not the XML.** Rekordbox's XML export is stale the moment you change anything, and an XML import can only create a playlist, never update one (importing `r&b` made a second `r&b`). Editing `master.db` (with the safety pattern above) is what makes updating playlists and cues possible.
+- **A separate agent.** Claude Code's per-call approvals are not ours to control, so the agent has its own gate. The cost is that, with the OpenAI SDK, tool results go to OpenAI (the privacy note above); using Claude through the MCP server avoids that.
+- **`src` layout, dependencies in `pyproject.toml`.** The package is installed in editable mode, so imports work the same in tests, the server and the agent. The roadmap ([docs/ROADMAP.md](docs/ROADMAP.md)) records what is done, what is unverified in the real apps, and what is next.
+
 ## Development
 
 ```bash
