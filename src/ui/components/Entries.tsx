@@ -1,8 +1,8 @@
 import { Box, Text } from "ink";
-import { argumentSummary, short, took } from "./format";
-import { renderMarkdown } from "./markdown";
+import { argumentSummary, short, took } from "../lib/format";
+import { renderMarkdown } from "../lib/markdown";
 import { Dots } from "./Spinner";
-import type { Approval, Entry } from "./state";
+import type { Approval, Entry } from "../lib/state";
 
 export function EntryView({ entry, width }: { entry: Entry; width: number }) {
   switch (entry.kind) {

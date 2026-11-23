@@ -1,4 +1,4 @@
-import type { Args } from "./protocol";
+import type { Args } from "../agent/protocol";
 
 /** Python-ish repr of a JSON value, cut to `limit` characters. */
 export function short(value: unknown, limit = 70): string {

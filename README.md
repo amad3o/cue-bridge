@@ -174,7 +174,10 @@ src/cuebridge/
   tools/           the MCP tools, one module per area: libraries, reports, playlists, repairs, cues, serato
                    (common.py holds the server, the loaded-library state and the error translation)
   mcp_server.py    the entry point: imports the tools (which registers them) and starts the server
-src/ui/            the agent's screen (Ink, TypeScript): src/App.tsx, state.ts (events to what is shown), agent.ts (starts the Python agent)
+src/ui/            the agent's screen (Ink, TypeScript), tests beside the code:
+                   App.tsx, components/ (entries, approval panel, spinner, prompt),
+                   agent/ (connection.ts starts the Python agent; protocol.ts is the JSON lines),
+                   lib/ (state.ts turns events into what is shown; format.ts, markdown.ts)
 tests/             mirrors src/cuebridge: agent/, apple_music/, rekordbox/, serato/, cues/, library/, server/; helpers/ and fixtures/
 docs/ROADMAP.md    completed work, known issues and what's next
 

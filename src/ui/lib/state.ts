@@ -1,6 +1,6 @@
 // What the screen shows, as a pure function of the agent's events (so it can be tested without a terminal).
 
-import type { AgentEvent, Args } from "./protocol";
+import type { AgentEvent, Args } from "../agent/protocol";
 
 export type Entry =
   | { kind: "banner"; tools: number; gated: number }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { initial, reduce, type State } from "./state";
-import type { AgentEvent } from "./protocol";
+import type { AgentEvent } from "../agent/protocol";
 
 const feed = (events: AgentEvent[], from: State = initial) => events.reduce((s, event) => reduce(s, { type: "event", event }), from);
 

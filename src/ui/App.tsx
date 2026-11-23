@@ -1,10 +1,10 @@
 import { Box, Static, Text, useApp, useInput, useStdout } from "ink";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { startAgent, type AgentConnection } from "./agent";
-import { ApprovalPanel, EntryView } from "./Entries";
-import { Spinner } from "./Spinner";
-import { initial, reduce, type Entry } from "./state";
-import { TextInput } from "./TextInput";
+import { startAgent, type AgentConnection } from "./agent/connection";
+import { ApprovalPanel, EntryView } from "./components/Entries";
+import { Spinner } from "./components/Spinner";
+import { initial, reduce, type Entry } from "./lib/state";
+import { TextInput } from "./components/TextInput";
 
 /** Entries before the first running tool never change again, so they can be printed once and left alone. */
 export function splitSettled(entries: Entry[]): { settled: Entry[]; live: Entry[] } {

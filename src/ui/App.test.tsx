@@ -1,8 +1,8 @@
 import { render } from "ink-testing-library";
 import { describe, expect, it, vi } from "vitest";
 import { App, splitSettled } from "./App";
-import type { startAgent } from "./agent";
-import { type AgentEvent, type ScreenMessage } from "./protocol";
+import type { startAgent } from "./agent/connection";
+import { type AgentEvent, type ScreenMessage } from "./agent/protocol";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 30));
 
