@@ -1,6 +1,6 @@
 """CueBridge's own agent: a terminal chat that calls the CueBridge tools through the OpenAI Agents SDK.
 
-Run it with:  make agent      (or: python -m cuebridge.agent, with backend/ on PYTHONPATH)
+Run it with:  make agent      (or: python -m cuebridge.agent, with cuebridge/src on PYTHONPATH)
 
 The agent starts the MCP server (`python -m cuebridge.mcp_server`) as a subprocess and gets all its tools.
 Reading and dry-run calls go straight through. Any call that would really change something (a write tool
@@ -22,7 +22,8 @@ from dotenv import load_dotenv
 
 from cuebridge.agent_ui import TerminalUI, parse_arguments
 
-BACKEND_DIR = Path(__file__).resolve().parents[1]
+SRC_DIR = Path(__file__).resolve().parents[1]  # cuebridge/src, which holds the package
+PROJECT_DIR = SRC_DIR.parent  # cuebridge/, which holds .env, tests and the virtualenv
 MAX_TURNS = 40
 # Some tools are slow (reading the open Music app takes about half a minute; a Serato sync touches many files).
 TOOL_TIMEOUT_SECONDS = 600
@@ -51,12 +52,12 @@ Ask = Callable[[str, dict[str, Any] | None], Awaitable[bool]]
 
 
 def server_params() -> dict[str, Any]:
-    """How to start the CueBridge MCP server: the same command the README gives, with backend/ on the path."""
+    """How to start the CueBridge MCP server: the same command the README gives, with src/ on the path."""
     return {
         "command": sys.executable,
         "args": ["-m", "cuebridge.mcp_server"],
         # The server logs every failed tool call at INFO, which would print over the chat.
-        "env": {"PYTHONPATH": str(BACKEND_DIR), "CUEBRIDGE_LOG_LEVEL": "WARNING"},
+        "env": {"PYTHONPATH": str(SRC_DIR), "CUEBRIDGE_LOG_LEVEL": "WARNING"},
     }
 
 
@@ -174,11 +175,11 @@ async def chat() -> None:
 
 
 def main() -> None:
-    load_dotenv(BACKEND_DIR / ".env")
+    load_dotenv(PROJECT_DIR / ".env")
 
     if not os.environ.get("OPENAI_API_KEY"):
         sys.exit(
-            "Put OPENAI_API_KEY in backend/.env (or the environment) first. "
+            "Put OPENAI_API_KEY in cuebridge/.env (or the environment) first. "
             "Note that your tool results (track names, file paths, playlists) are sent to OpenAI."
         )
 

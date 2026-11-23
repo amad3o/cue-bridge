@@ -26,14 +26,14 @@ Not built yet: Serato to Rekordbox cues, cue support for M4A, AIFF and FLAC file
 Requires Python 3.10 or newer. The tests run on 3.10 to 3.14 (checked locally and in CI); development is on 3.13 (see `.python-version`).
 
 ```bash
-make setup      # creates backend/.venv and installs the dependencies and dev tools
+make setup      # creates .venv and installs the dependencies and dev tools
 make check      # ruff, then the tests (what CI runs); `make test` and `make lint` run one each
 ```
 
 Or by hand:
 
 ```bash
-cd backend
+# from the repo root
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
@@ -52,17 +52,17 @@ From the repository root:
 
 ```bash
 claude mcp add --scope local cuebridge \
-  -e "PYTHONPATH=$(pwd)/backend" \
-  -- "$(pwd)/backend/.venv/bin/python" -m cuebridge.mcp_server
+  -e "PYTHONPATH=$(pwd)/src" \
+  -- "$(pwd)/.venv/bin/python" -m cuebridge.mcp_server
 ```
 
-Start a new session (or run `/mcp`) and `cuebridge` should show as connected. The server uses stdio, so any MCP client can run the same command: `python -m cuebridge.mcp_server` with `backend/` on `PYTHONPATH`. For example, Claude Desktop reads the same command, arguments and environment from its `mcpServers` config.
+Start a new session (or run `/mcp`) and `cuebridge` should show as connected. The server uses stdio, so any MCP client can run the same command: `python -m cuebridge.mcp_server` with `src/` on `PYTHONPATH`. For example, Claude Desktop reads the same command, arguments and environment from its `mcpServers` config.
 
 ### Or use the built-in agent
 
 CueBridge also has its own terminal chat, so you don't need Claude Code or Claude Desktop. It uses the [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/) and starts the same MCP server for you, so it has every tool above.
 
-1. Put your key in `backend/.env` (git ignores this file):
+1. Put your key in `.env` (git ignores this file):
 
    ```
    OPENAI_API_KEY=sk-...
@@ -79,7 +79,7 @@ CueBridge also has its own terminal chat, so you don't need Claude Code or Claud
 
    Type a request at the `you>` prompt (an empty line or Ctrl-D quits; the up arrow recalls earlier requests). Opening the Music app first lets it read your Apple Music library. While it works you see a spinner and a line for each tool it calls (`→ name(arguments)`, then `✓` with the time, or a red `✗` with the reason if the tool failed). Replies are shown as formatted markdown.
 
-**Approval.** Reading and dry runs go straight through. A call that would really change something (a writing tool with `dry_run=false`) stops and shows a red panel with the tool and its arguments, and runs only if you type `y` or `yes`. That check is in `cuebridge/agent.py`, not in the model's hands, and anything unclear (for example, arguments it cannot read) is asked about too. If you refuse, nothing changes and the model is told so.
+**Approval.** Reading and dry runs go straight through. A call that would really change something (a writing tool with `dry_run=false`) stops and shows a red panel with the tool and its arguments, and runs only if you type `y` or `yes`. That check is in `src/cuebridge/agent.py`, not in the model's hands, and anything unclear (for example, arguments it cannot read) is asked about too. If you refuse, nothing changes and the model is told so.
 
 **Privacy.** Every tool result the model needs (track names, file paths, playlists, cues) is sent to OpenAI. Tracing is switched off, because the SDK would otherwise send traces to OpenAI too. Your audio files and the libraries themselves stay on your machine. To keep library data off OpenAI's servers, use the MCP server with Claude instead, or leave the agent alone.
 
@@ -149,7 +149,7 @@ These tools **write to Rekordbox's own database** (`master.db`), like the playli
 ## Development
 
 ```bash
-cd backend
+# from the repo root
 pytest                        # all tests
 pytest tests/test_mcp_server.py::TestSetDefaultCue   # one class
 ```
@@ -157,7 +157,7 @@ pytest tests/test_mcp_server.py::TestSetDefaultCue   # one class
 Layout:
 
 ```
-backend/cuebridge/
+src/cuebridge/
   models.py        shared Pydantic models (Track, Cue)
   parsers/         file formats to models (Rekordbox XML, Apple Music XML, Serato tags)
   services/        the logic, grouped by app:

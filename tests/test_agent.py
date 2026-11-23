@@ -304,13 +304,13 @@ class TestTheRealServer:
 
 
 class TestServerParams:
-    def test_it_starts_the_same_server_as_the_readme_with_backend_on_the_path(self):
+    def test_it_starts_the_same_server_as_the_readme_with_src_on_the_path(self):
         params = agent_module.server_params()
 
         assert params["args"] == ["-m", "cuebridge.mcp_server"]
-        assert params["env"]["PYTHONPATH"] == str(agent_module.BACKEND_DIR)
+        assert params["env"]["PYTHONPATH"] == str(agent_module.SRC_DIR)
         assert params["env"]["CUEBRIDGE_LOG_LEVEL"] == "WARNING"
-        assert (agent_module.BACKEND_DIR / "cuebridge" / "mcp_server.py").exists()
+        assert (agent_module.SRC_DIR / "cuebridge" / "mcp_server.py").exists()
 
     def test_the_server_quiets_its_logging_when_asked(self, monkeypatch):
         import logging
