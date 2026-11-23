@@ -1,0 +1,29 @@
+{
+  "name": "cuebridge-ui",
+  "private": true,
+  "type": "module",
+  "description": "The terminal screen for the CueBridge agent. Display only: the agent (Python) owns the model, the tools and the approval rule.",
+  "scripts": {
+    "start": "tsx src/index.tsx",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ink": "^6.8.0",
+    "marked": "^15.0.12",
+    "marked-terminal": "^7.3.1",
+    "react": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/marked-terminal": "^6.1.1",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "ink-testing-library": "^4.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1"
+  }
+}

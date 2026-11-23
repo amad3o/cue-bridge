@@ -1,11 +1,12 @@
-"""CueBridge's own agent: a terminal chat that calls the CueBridge tools through the OpenAI Agents SDK.
+"""CueBridge's own agent: calls the CueBridge tools through the OpenAI Agents SDK, with a screen of its own.
 
-Run it with:  make agent      (or: python -m cuebridge.agent, with cuebridge/src on PYTHONPATH)
+Run it with:  make agent      (the Ink screen in ui/ starts this module as a child process)
 
-The agent starts the MCP server (`python -m cuebridge.mcp_server`) as a subprocess and gets all its tools.
-Reading and dry-run calls go straight through. Any call that would really change something (a write tool
-with dry_run=false) stops and asks you first, in this terminal. The approval is enforced here, not by
-the model: the model cannot skip it.
+This process has no screen. It reads the user's messages from stdin and writes events to stdout, one JSON
+object per line (see cuebridge.agent_protocol). It starts the MCP server (`python -m cuebridge.mcp_server`) as
+a subprocess and gets all its tools. Reading and dry-run calls go straight through. Any call that would really
+change something (a write tool with dry_run=false) stops and asks the screen first. The approval is enforced
+here, not by the model and not by the screen: the model cannot skip it, and the screen can only say no.
 """
 
 import asyncio
@@ -20,10 +21,10 @@ from agents import Agent, Runner, set_tracing_disabled
 from agents.mcp import MCPServerStdio
 from dotenv import load_dotenv
 
-from cuebridge.agent_ui import TerminalUI, parse_arguments
+from cuebridge.agent_protocol import JsonUI, parse_arguments
 
-SRC_DIR = Path(__file__).resolve().parents[1]  # cuebridge/src, which holds the package
-PROJECT_DIR = SRC_DIR.parent  # cuebridge/, which holds .env, tests and the virtualenv
+SRC_DIR = Path(__file__).resolve().parents[1]  # src/, which holds the package
+PROJECT_DIR = SRC_DIR.parent  # the repository root, which holds .env, tests and the virtualenv
 MAX_TURNS = 40
 # Some tools are slow (reading the open Music app takes about half a minute; a Serato sync touches many files).
 TOOL_TIMEOUT_SECONDS = 600
@@ -93,12 +94,12 @@ def is_real_change(arguments: dict[str, Any] | None) -> bool:
     return arguments.get("dry_run", True) is not True
 
 
-async def run_turn(agent: Agent, conversation: Any, ask: Ask, ui: TerminalUI | None = None) -> Any:
+async def run_turn(agent: Agent, conversation: Any, ask: Ask, ui: JsonUI | None = None) -> Any:
     """Run the agent until it answers, stopping for approval on each call that would really change something.
 
     `conversation` is the list of messages so far (it may end with the user's new message). Dry runs and
     read-only calls are approved here without asking; a refused call is reported to the model as refused.
-    With a `ui`, a spinner shows while the model and tools work, and each tool call gets a line.
+    With a `ui`, the screen is told when the model and tools are working, and about each tool call.
     """
     thinking = ui.thinking if ui else nullcontext
     hooks = ui.hooks() if ui else None
@@ -133,16 +134,10 @@ def build_agent(server: MCPServerStdio) -> Agent:
     )
 
 
-async def chat() -> None:
+async def chat(ui: JsonUI, stdin: Any) -> None:
     # The SDK sends traces to OpenAI by default; the tool results hold the user's library, so keep them local.
     set_tracing_disabled(True)
-
-    try:
-        import readline  # noqa: F401  (importing it gives the prompt arrow-key history and line editing)
-    except ImportError:
-        pass
-
-    ui = TerminalUI()
+    ui.listen(stdin)
 
     async with MCPServerStdio(
         params=server_params(),
@@ -152,17 +147,12 @@ async def chat() -> None:
     ) as server:
         agent = build_agent(server)
         tools = await server.list_tools()
-        ui.banner(len(tools), sum(tool_needs_approval(t) for t in tools))
+        ui.ready(len(tools), sum(tool_needs_approval(t) for t in tools))
         conversation: list[Any] = []
 
-        while True:
-            try:
-                line = await asyncio.to_thread(ui.read_line)
-            except EOFError:
-                break
-
-            if not line:
-                break
+        while (line := await ui.next_user_text()) is not None:
+            if not line.strip():
+                continue
 
             try:
                 result = await run_turn(agent, [*conversation, {"role": "user", "content": line}], ui.ask, ui)
@@ -177,16 +167,23 @@ async def chat() -> None:
 def main() -> None:
     load_dotenv(PROJECT_DIR / ".env")
 
+    # stdout belongs to the protocol. Keep a private copy of it, then point fd 1 at stderr so that anything
+    # else that prints (a library warning, a stray print) cannot corrupt the stream the screen is reading.
+    protocol_out = os.fdopen(os.dup(1), "w", encoding="utf-8", buffering=1)
+    os.dup2(2, 1)
+    ui = JsonUI(lambda line: (protocol_out.write(line + "\n"), protocol_out.flush()))
+
     if not os.environ.get("OPENAI_API_KEY"):
-        sys.exit(
-            "Put OPENAI_API_KEY in cuebridge/.env (or the environment) first. "
+        ui.show_error(
+            "Put OPENAI_API_KEY in .env (or the environment) first. "
             "Note that your tool results (track names, file paths, playlists) are sent to OpenAI."
         )
+        sys.exit(1)
 
     try:
-        asyncio.run(chat())
+        asyncio.run(chat(ui, sys.stdin))
     except KeyboardInterrupt:
-        print()
+        pass
 
 
 if __name__ == "__main__":

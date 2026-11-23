@@ -9,10 +9,9 @@ from agents import Agent, ModelResponse, Usage, function_tool, set_tracing_disab
 from agents.mcp import MCPServerStdio
 from agents.models.interface import Model
 from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
-from rich.console import Console
 
 from cuebridge import agent as agent_module
-from cuebridge.agent_ui import TerminalUI
+from cuebridge.agent_protocol import JsonUI
 
 set_tracing_disabled(True)
 
@@ -159,41 +158,72 @@ class TestTheApprovalGate:
         assert world.writes == [False]
 
 
-class TestWithTheTerminalUI:
-    """The same loop with the real UI attached (output captured): the look changes nothing about what is approved."""
+class TestWithTheScreenAttached:
+    """The same loop with the real JSON UI attached: what the screen is told, and that its answers decide approval."""
 
-    @pytest.fixture
-    def ui(self):
-        return TerminalUI(Console(record=True, width=100, force_terminal=False))
-
-    def run(self, world, ui, *replies):
+    def run(self, world, answers, *replies):
+        """Run one turn. `answers` are the screen's replies to approval requests, as messages (a fresh id is filled in)."""
         world.model = ScriptedModel(*replies)
         agent = Agent(name="test", model=world.model, tools=world.tools)
-        return asyncio.run(agent_module.run_turn(agent, [{"role": "user", "content": "go"}], ui.ask, ui))
+        sent = []
 
-    def test_each_tool_call_gets_a_line(self, world, ui, monkeypatch):
-        monkeypatch.setattr("builtins.input", lambda *a: "y")
-        self.run(world, ui, [call("look_at_thing", {}, "c1"), call("sync_thing", {"dry_run": True}, "c2")], [say("done")])
+        async def go():
+            ui = JsonUI(sent.append)
 
-        out = ui.console.export_text()
-        assert "→ look_at_thing()" in out
-        assert "✓ look_at_thing" in out
-        assert "→ sync_thing(dry_run=True)" in out
-        assert "Approval needed" not in out  # a dry run is not asked about
+            for answer in answers:
+                ui.incoming.put_nowait({"type": "approval_response", "id": "approval-1", **answer})
 
-    def test_a_real_change_shows_the_panel_and_runs_on_yes(self, world, ui, monkeypatch):
-        monkeypatch.setattr("builtins.input", lambda *a: "y")
-        self.run(world, ui, [call("sync_thing", {"dry_run": False, "note": "n"}, "c1")], [say("done")])
+            return await agent_module.run_turn(agent, [{"role": "user", "content": "go"}], ui.ask, ui)
 
-        out = ui.console.export_text()
-        assert "Approval needed" in out
-        assert "This will really change something." in out
+        asyncio.run(go())
+        return [json.loads(line) for line in sent]
+
+    def test_each_tool_call_is_reported(self, world):
+        events = self.run(world, [], [call("look_at_thing", {}, "c1"), call("sync_thing", {"dry_run": True}, "c2")], [say("done")])
+        kinds = [(e["type"], e.get("name")) for e in events]
+
+        assert ("tool_start", "look_at_thing") in kinds
+        assert ("tool_end", "look_at_thing") in kinds
+        assert ("tool_start", "sync_thing") in kinds
+        assert not any(e["type"] == "approval_request" for e in events)  # a dry run is not asked about
+
+    def test_a_real_change_is_asked_about_and_runs_on_approval(self, world):
+        events = self.run(world, [{"approve": True}], [call("sync_thing", {"dry_run": False, "note": "n"}, "c1")], [say("done")])
+        request = next(e for e in events if e["type"] == "approval_request")
+
+        assert request["name"] == "sync_thing"
+        assert request["arguments"] == {"dry_run": False, "note": "n"}
         assert world.writes == [False]
 
-    def test_anything_but_yes_declines(self, world, ui, monkeypatch):
-        monkeypatch.setattr("builtins.input", lambda *a: "yes please")
-        self.run(world, ui, [call("sync_thing", {"dry_run": False}, "c1")], [say("ok")])
+    @pytest.mark.parametrize("answer", [{"approve": False}, {"approve": "true"}, {"approve": 1}, {"approve": "yes"}, {}])
+    def test_anything_but_a_real_true_declines(self, world, answer):
+        self.run(world, [answer], [call("sync_thing", {"dry_run": False}, "c1")], [say("ok")])
 
+        assert world.writes == []
+
+    def test_an_answer_with_the_wrong_id_is_not_an_approval(self, world):
+        world.model = ScriptedModel([call("sync_thing", {"dry_run": False}, "c1")], [say("ok")])
+        agent = Agent(name="test", model=world.model, tools=world.tools)
+
+        async def go():
+            ui = JsonUI(lambda line: None)
+            ui.incoming.put_nowait({"type": "approval_response", "id": "approval-99", "approve": True})
+            ui.incoming.put_nowait(None)  # then the screen goes away
+            await agent_module.run_turn(agent, [{"role": "user", "content": "go"}], ui.ask, ui)
+
+        asyncio.run(go())
+        assert world.writes == []
+
+    def test_a_screen_that_goes_away_is_a_refusal(self, world):
+        world.model = ScriptedModel([call("sync_thing", {"dry_run": False}, "c1")], [say("ok")])
+        agent = Agent(name="test", model=world.model, tools=world.tools)
+
+        async def go():
+            ui = JsonUI(lambda line: None)
+            ui.incoming.put_nowait(None)
+            await agent_module.run_turn(agent, [{"role": "user", "content": "go"}], ui.ask, ui)
+
+        asyncio.run(go())
         assert world.writes == []
 
 

@@ -2,14 +2,16 @@
 VENV := .venv
 PY := $(VENV)/bin/python
 
-.PHONY: help setup setup-db test lint check agent
+.PHONY: help setup setup-db setup-ui test test-ui lint check agent
 
 help:
 	@echo "make setup     create .venv and install the dependencies and dev tools"
 	@echo "make setup-db  also install the optional Rekordbox database packages (needs: brew install sqlcipher)"
-	@echo "make test      run the tests"
+	@echo "make setup-ui  install the terminal screen's Node packages (needs Node 20+)"
+	@echo "make test      run the Python tests"
+	@echo "make test-ui   typecheck and test the terminal screen"
 	@echo "make lint      run ruff"
-	@echo "make check     lint, then test (what CI runs)"
+	@echo "make check     lint, then both test suites (what CI runs)"
 	@echo "make agent     chat with CueBridge's own agent (needs OPENAI_API_KEY)"
 
 $(PY):
@@ -24,13 +26,25 @@ setup-db: setup
 	LDFLAGS="-L$$(brew --prefix sqlcipher)/lib" SQLCIPHER_PATH="$$(brew --prefix sqlcipher)" \
 	$(PY) -m pip install -r requirements-rekordbox-db.txt
 
+setup-ui:
+	cd ui && npm install
+	# keep node_modules out of Dropbox: it is large, regenerable and slow to sync
+	xattr -w com.dropbox.ignored 1 ui/node_modules 2>/dev/null || true
+
+ui/node_modules:
+	$(MAKE) setup-ui
+
 test: $(PY)
 	.venv/bin/python -m pytest -q
+
+test-ui: ui/node_modules
+	cd ui && npm run typecheck && npm test
 
 lint: $(PY)
 	.venv/bin/ruff check src tests
 
-check: lint test
+check: lint test test-ui
 
-agent: $(PY)
-	PYTHONPATH=src .venv/bin/python -m cuebridge.agent
+# The Ink screen starts the Python agent (src/cuebridge/agent.py) as a child process.
+agent: $(PY) ui/node_modules
+	cd ui && npm start --silent

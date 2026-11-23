@@ -27,8 +27,10 @@ Requires Python 3.10 or newer. The tests run on 3.10 to 3.14 (checked locally an
 
 ```bash
 make setup      # creates .venv and installs the dependencies and dev tools
-make check      # ruff, then the tests (what CI runs); `make test` and `make lint` run one each
+make check      # ruff, then the Python and screen tests (what CI runs); `make test`, `make test-ui` and `make lint` run one each
 ```
+
+The built-in agent's screen (`ui/`) is a small Node app and needs Node 20 or newer; `make agent` installs its packages the first time (`make setup-ui` does it by hand and tells Dropbox to leave `ui/node_modules` alone). The MCP server needs no Node.
 
 Or by hand:
 
@@ -60,7 +62,7 @@ Start a new session (or run `/mcp`) and `cuebridge` should show as connected. Th
 
 ### Or use the built-in agent
 
-CueBridge also has its own terminal chat, so you don't need Claude Code or Claude Desktop. It uses the [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/) and starts the same MCP server for you, so it has every tool above.
+CueBridge also has its own terminal chat, so you don't need Claude Code or Claude Desktop. The screen is an [Ink](https://github.com/vadimdemedes/ink) app (`ui/`). It starts the Python agent (`src/cuebridge/agent.py`, built on the [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)), which starts the same MCP server, so it has every tool above. The two talk over stdin and stdout, one JSON object per line (described at the top of `src/cuebridge/agent_protocol.py`).
 
 1. Put your key in `.env` (git ignores this file):
 
@@ -79,7 +81,7 @@ CueBridge also has its own terminal chat, so you don't need Claude Code or Claud
 
    Type a request at the `you>` prompt (an empty line or Ctrl-D quits; the up arrow recalls earlier requests). Opening the Music app first lets it read your Apple Music library. While it works you see a spinner and a line for each tool it calls (`→ name(arguments)`, then `✓` with the time, or a red `✗` with the reason if the tool failed). Replies are shown as formatted markdown.
 
-**Approval.** Reading and dry runs go straight through. A call that would really change something (a writing tool with `dry_run=false`) stops and shows a red panel with the tool and its arguments, and runs only if you type `y` or `yes`. That check is in `src/cuebridge/agent.py`, not in the model's hands, and anything unclear (for example, arguments it cannot read) is asked about too. If you refuse, nothing changes and the model is told so.
+**Approval.** Reading and dry runs go straight through. A call that would really change something (a writing tool with `dry_run=false`) stops and shows a red panel with the tool and its arguments, and runs only if you press `y`. Any other key is a no. That check is in `src/cuebridge/agent.py`, not in the model's hands and not in the screen's: the screen can only answer, and a wrong id, a malformed answer, anything but a real `true`, or the screen closing all count as a no. Anything unclear (for example, arguments it cannot read) is asked about too. If you refuse, nothing changes and the model is told so.
 
 **Privacy.** Every tool result the model needs (track names, file paths, playlists, cues) is sent to OpenAI. Tracing is switched off, because the SDK would otherwise send traces to OpenAI too. Your audio files and the libraries themselves stay on your machine. To keep library data off OpenAI's servers, use the MCP server with Claude instead, or leave the agent alone.
 
@@ -167,9 +169,10 @@ src/cuebridge/
     compare/       matching tracks, finding differences, the cue comparison, the three-way sync check
     reports/       searches and the read-only reports
     cues/          cue rules and timing
-  agent.py         the built-in terminal agent (OpenAI Agents SDK) and its approval gate
-  agent_ui.py      how the agent looks in the terminal (rich): spinner, tool lines, replies, the approval panel
+  agent.py         the built-in agent (OpenAI Agents SDK), headless, and its approval gate
+  agent_protocol.py  the JSON-lines conversation with the screen (events out, messages in)
   tools/           the MCP tools, one module per area: libraries, reports, playlists, repairs, cues, serato
                    (common.py holds the server, the loaded-library state and the error translation)
   mcp_server.py    the entry point: imports the tools (which registers them) and starts the server
+ui/                the agent's screen (Ink, TypeScript): src/App.tsx, state.ts (events to what is shown), agent.ts (starts the Python agent)
 ```
