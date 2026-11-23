@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-export function Spinner({ label = "Working…" }: { label?: string }) {
+function useFrame(): string {
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
@@ -11,9 +11,18 @@ export function Spinner({ label = "Working…" }: { label?: string }) {
     return () => clearInterval(timer);
   }, []);
 
+  return FRAMES[frame];
+}
+
+/** Just the cyan dots, to sit inside a line. */
+export function Dots() {
+  return <Text color="cyan">{useFrame()}</Text>;
+}
+
+export function Spinner({ label = "Thinking..." }: { label?: string }) {
   return (
     <Text>
-      <Text color="cyan">{FRAMES[frame]}</Text> <Text dimColor>{label}</Text>
+      <Dots /> <Text dimColor>{label}</Text>
     </Text>
   );
 }

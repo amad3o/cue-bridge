@@ -3,7 +3,7 @@ import { useState } from "react";
 
 type Props = { onSubmit: (text: string) => void; onQuit: () => void; disabled?: boolean };
 
-/** A one-line prompt with history (up and down). Ctrl-D on an empty line quits (Ctrl-C is handled by the app). */
+/** A one-line prompt with history (up and down). Ctrl-D on an empty line quits (Ctrl-C is handled by the app, and the app also quits on "exit"). */
 export function TextInput({ onSubmit, onQuit, disabled = false }: Props) {
   const [value, setValue] = useState("");
   const [history, setHistory] = useState<string[]>([]);
@@ -49,11 +49,11 @@ export function TextInput({ onSubmit, onQuit, disabled = false }: Props) {
 
   return (
     <Box>
-      <Text bold color="cyan">
-        you&gt;{" "}
+      <Text bold color="blue">
+        {"> "}
       </Text>
       <Text dimColor={disabled}>{value}</Text>
-      {!disabled && <Text inverse> </Text>}
+      {!disabled && <Text color="gray">▌</Text>}
     </Box>
   );
 }

@@ -1,5 +1,5 @@
 import { Box, Static, Text, useApp, useInput, useStdout } from "ink";
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { startAgent, type AgentConnection } from "./agent";
 import { ApprovalPanel, EntryView } from "./Entries";
 import { Spinner } from "./Spinner";
@@ -20,6 +20,7 @@ export function App({ connect = startAgent }: { connect?: typeof startAgent }) {
   const [state, dispatch] = useReducer(reduce, initial);
   const agent = useRef<AgentConnection | null>(null);
   const quitting = useRef(false);
+  const [selected, setSelected] = useState<0 | 1>(1); // 0 = Yes, 1 = No: every question starts on No
 
   const quit = useCallback(() => {
     quitting.current = true;
@@ -40,17 +41,23 @@ export function App({ connect = startAgent }: { connect?: typeof startAgent }) {
     return () => agent.current?.stop();
   }, [connect]);
 
-  // Ctrl-C always leaves, whatever the agent is doing. While a question is open, only a real "y" is a yes:
-  // any other key is a no (and the agent treats a missing answer as a no too).
+  useEffect(() => setSelected(1), [state.approval?.id]);
+
+  // Ctrl-C always leaves, whatever the agent is doing. While a question is open, the arrows only move the choice;
+  // Enter takes the choice (which starts on No), "y" is a yes, and any other key is a no. The agent treats a
+  // missing answer as a no too.
   useInput((input, key) => {
     if (key.ctrl && input === "c") return quit();
     if (!state.approval) return;
+    if (key.upArrow || key.downArrow) return setSelected((s) => (s === 0 ? 1 : 0));
 
-    agent.current?.send({ type: "approval_response", id: state.approval.id, approve: input === "y" || input === "Y" });
+    const approve = key.return ? selected === 0 : input === "y" || input === "Y";
+    agent.current?.send({ type: "approval_response", id: state.approval.id, approve });
     dispatch({ type: "answered" });
   });
 
   const submit = (text: string) => {
+    if (["exit", "quit"].includes(text.toLowerCase())) return quit();
     dispatch({ type: "user", text });
     agent.current?.send({ type: "user_message", text });
   };
@@ -65,9 +72,9 @@ export function App({ connect = startAgent }: { connect?: typeof startAgent }) {
       {live.map((entry, index) => (
         <EntryView key={index} entry={entry} width={width} />
       ))}
-      {state.approval && <ApprovalPanel approval={state.approval} />}
+      {state.approval && <ApprovalPanel approval={state.approval} selected={selected} />}
       {state.thinking && !state.approval && <Spinner />}
-      {!state.ready && !state.closed && <Spinner label="Starting the agent and the CueBridge tools…" />}
+      {!state.ready && !state.closed && <Spinner label="Starting the agent and the CueBridge tools..." />}
       {state.closed ? (
         <Text dimColor>Press Ctrl-C to leave.</Text>
       ) : (

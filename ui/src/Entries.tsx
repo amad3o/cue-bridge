@@ -1,45 +1,59 @@
 import { Box, Text } from "ink";
 import { argumentSummary, short, took } from "./format";
 import { renderMarkdown } from "./markdown";
+import { Dots } from "./Spinner";
 import type { Approval, Entry } from "./state";
 
 export function EntryView({ entry, width }: { entry: Entry; width: number }) {
   switch (entry.kind) {
     case "banner":
       return (
-        <Box borderStyle="round" borderColor="cyan" flexDirection="column" paddingX={1}>
-          <Text bold>CueBridge agent</Text>
+        <Box flexDirection="column" marginBottom={1}>
           <Text>
+            <Text bold color="magenta">
+              🤖 CueBridge Agent
+            </Text>
+            <Text dimColor> (type "exit" to quit)</Text>
+          </Text>
+          <Text dimColor>
             {entry.tools} tools. {entry.gated} of them ask you first before a real change; dry runs and reads do not.
           </Text>
-          <Text dimColor>Ctrl-D on an empty line (or Ctrl-C) quits. Up and down recall earlier messages.</Text>
         </Box>
       );
     case "user":
       return (
-        <Box marginTop={1}>
-          <Text bold color="cyan">
-            you&gt;{" "}
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold color="blue">
+            › You
           </Text>
-          <Text>{entry.text}</Text>
+          <Box marginLeft={2}>
+            <Text>{entry.text}</Text>
+          </Box>
         </Box>
       );
     case "tool":
       return <ToolLine entry={entry} />;
     case "reply":
       return (
-        <Box marginTop={1}>
-          <Text>{entry.text ? renderMarkdown(entry.text, Math.max(40, width - 2)) : ""}</Text>
-          {!entry.text && <Text dimColor>(no reply)</Text>}
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold color="green">
+            › Assistant
+          </Text>
+          <Box marginLeft={2}>
+            <Text>{entry.text ? renderMarkdown(entry.text, Math.max(40, width - 4)) : ""}</Text>
+            {!entry.text && <Text dimColor>(no reply)</Text>}
+          </Box>
         </Box>
       );
     case "error":
       return (
-        <Box borderStyle="round" borderColor="red" flexDirection="column" paddingX={1} marginTop={1}>
+        <Box flexDirection="column" marginTop={1}>
           <Text bold color="red">
-            Something went wrong
+            › Something went wrong
           </Text>
-          <Text>{entry.message}</Text>
+          <Box marginLeft={2}>
+            <Text>{entry.message}</Text>
+          </Box>
         </Box>
       );
     case "note":
@@ -48,63 +62,76 @@ export function EntryView({ entry, width }: { entry: Entry; width: number }) {
 }
 
 function ToolLine({ entry }: { entry: Extract<Entry, { kind: "tool" }> }) {
-  if (entry.state === "running")
-    return (
-      <Text>
-        <Text dimColor>{"  → "}</Text>
-        <Text bold>{entry.name}</Text>
-        <Text dimColor>({argumentSummary(entry.arguments)})</Text>
-      </Text>
-    );
-
-  if (entry.state === "done")
-    return (
-      <Text>
-        <Text color="green">{"  ✓ "}</Text>
-        {entry.name}
-        <Text dimColor>{took(entry.seconds)}</Text>
-      </Text>
-    );
+  const failed = entry.state === "failed";
 
   return (
-    <Text>
-      <Text color="red">{"  ✗ "}</Text>
-      {entry.name}
-      <Text dimColor>{took(entry.seconds)}</Text>
-      <Text color="red"> {short(entry.failure ?? "", 110).replace(/^'|'$/g, "")}</Text>
-    </Text>
+    <Box flexDirection="column" marginLeft={2}>
+      <Box>
+        <Text color={failed ? "red" : "yellow"}>⚡ </Text>
+        <Text color={failed ? "red" : "yellow"} bold>
+          {entry.name}
+        </Text>
+        {entry.state === "running" && (
+          <Text>
+            {" "}
+            <Dots />
+          </Text>
+        )}
+        {entry.state === "done" && <Text color="green"> ✓</Text>}
+        {failed && <Text color="red"> ✗</Text>}
+        {entry.state !== "running" && <Text dimColor>{took(entry.seconds)}</Text>}
+      </Box>
+      <Box marginLeft={2}>
+        <Text dimColor>→ {short(argumentSummary(entry.arguments), 100).replace(/^'|'$/g, "")}</Text>
+      </Box>
+      {failed && (
+        <Box marginLeft={2}>
+          <Text color="red">{short(entry.failure ?? "", 110).replace(/^'|'$/g, "")}</Text>
+        </Box>
+      )}
+    </Box>
   );
 }
 
-export function ApprovalPanel({ approval }: { approval: Approval }) {
+/** `selected` is 0 for Yes and 1 for No; it starts on No, so Enter alone never approves a real change. */
+export function ApprovalPanel({ approval, selected }: { approval: Approval; selected: 0 | 1 }) {
+  const options = ["Yes", "No"];
+
   return (
-    <Box borderStyle="round" borderColor="red" flexDirection="column" paddingX={1} marginTop={1}>
-      <Text bold color="red">
-        Approval needed
+    <Box flexDirection="column" marginTop={1}>
+      <Text color="yellow" bold>
+        Tool Approval Required
       </Text>
-      <Text bold color="red">
-        This will really change something.
-      </Text>
-      <Text>
-        <Text dimColor>Tool: </Text>
-        <Text bold>{approval.name}</Text>
-      </Text>
-      <Box flexDirection="column" marginTop={1}>
-        {approval.arguments === null ? (
-          <Text color="yellow">(the arguments could not be read)</Text>
-        ) : (
-          Object.entries(approval.arguments).map(([key, value]) => (
-            <Text key={key}>
-              <Text dimColor>{key.padEnd(18)}</Text>
-              {short(value, 100)}
-            </Text>
-          ))
-        )}
-      </Box>
-      <Box marginTop={1}>
-        <Text bold>
-          Go ahead? <Text color="green">y</Text> = yes, anything else = no
+      <Box marginLeft={2} flexDirection="column">
+        <Text>
+          <Text color="cyan" bold>
+            {approval.name}
+          </Text>
+          <Text dimColor> would really change something</Text>
         </Text>
+        <Box marginLeft={2} flexDirection="column">
+          {approval.arguments === null ? (
+            <Text color="yellow">(the arguments could not be read)</Text>
+          ) : (
+            Object.entries(approval.arguments).map(([key, value]) => (
+              <Text key={key} dimColor>
+                {key.padEnd(18)}
+                {short(value, 100)}
+              </Text>
+            ))
+          )}
+        </Box>
+      </Box>
+      <Box marginTop={1} marginLeft={2} flexDirection="row" gap={2}>
+        {options.map((option, index) => (
+          <Text key={option} color={selected === index ? "green" : "gray"} bold={selected === index}>
+            {selected === index ? "› " : "  "}
+            {option}
+          </Text>
+        ))}
+      </Box>
+      <Box marginLeft={2}>
+        <Text dimColor>↑↓ and Enter to choose, or y for yes. Any other key is no.</Text>
       </Box>
     </Box>
   );

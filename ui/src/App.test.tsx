@@ -51,7 +51,7 @@ describe("App", () => {
     await tick();
     const frame = lastFrame() ?? "";
 
-    expect(frame).toContain("Approval needed");
+    expect(frame).toContain("Tool Approval Required");
     expect(frame).toContain("sync_cues_to_serato");
     expect(frame).toContain("dry_run");
     expect(frame).toContain("[bold]x[/bold]");
@@ -67,6 +67,50 @@ describe("App", () => {
     await tick();
 
     expect(agent.sent).toEqual([{ type: "approval_response", id: "approval-1", approve: true }]);
+  });
+
+  it("approves with the arrows and Enter, and Enter alone is a no", async () => {
+    const agent = fakeAgent();
+    const { stdin } = render(<App connect={agent.connect} />);
+    agent.emit(ready);
+    agent.emit(request);
+    await tick();
+    stdin.write("\u001b[A"); // up: from No to Yes
+    await tick();
+    expect(agent.sent).toEqual([]);
+    stdin.write("\r");
+    await tick();
+
+    expect(agent.sent).toEqual([{ type: "approval_response", id: "approval-1", approve: true }]);
+  });
+
+  it("moves back to No with the arrows, then Enter is a no", async () => {
+    const agent = fakeAgent();
+    const { stdin } = render(<App connect={agent.connect} />);
+    agent.emit(ready);
+    agent.emit(request);
+    await tick();
+    stdin.write("\u001b[A");
+    await tick();
+    stdin.write("\u001b[B");
+    await tick();
+    stdin.write("\r");
+    await tick();
+
+    expect(agent.sent).toEqual([{ type: "approval_response", id: "approval-1", approve: false }]);
+  });
+
+  it("quits when the user types exit", async () => {
+    const agent = fakeAgent();
+    const { stdin } = render(<App connect={agent.connect} />);
+    agent.emit(ready);
+    await tick();
+    stdin.write("exit");
+    await tick();
+    stdin.write("\r");
+    await tick();
+
+    expect(agent.sent).toEqual([{ type: "quit" }]);
   });
 
   it.each(["n", "\r", "x", "\u001b"])("sends approve: false for %j", async (key) => {
