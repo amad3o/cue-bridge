@@ -266,6 +266,23 @@ The pytest suite checks that the code does what it says. Evaluations check that 
 - [ ] A cost note per run (calls and tokens), and a way to run a single case.
 - [ ] Decide where model-graded checks are needed. Prefer code checks; use a model grader only for free-text quality, and check the grader against a few human-scored examples.
 
+### 13. Automatic beatgrids and cues (our own analysis)
+
+Goal: analyze each track ourselves, write the beatgrid into Rekordbox, and keep Serato's grid identical, because neither program's own grid is trusted. Planned 2026-11-22; nothing built yet.
+
+What the spike found (2026-11-22, in a scratch virtualenv, nothing installed in the project):
+- Rekordbox keeps beatgrids in its analysis files, not in `master.db`: `ANLZ` `.DAT` (`PQTZ` tag) and `.EXT` (`PQT2` tag), plus a BPM in `master.db`. `pyrekordbox` 0.5 can read and `save` them (entries are beat number, BPM x 100, time in ms). We have never written these files, so the first proof is on a copy.
+- Serato's `Serato BeatGrid` tag is already decoded by `read_first_beat`; writing it is the same in-place kind of edit as the cue sync, with the same per-format timing offsets (`cue_timing.py`).
+- `librosa` installs on Python 3.13 and decodes MP3 and WAV with no system packages. M4A, AIFF and FLAC may need `ffmpeg` (not installed here).
+
+Method: BPM from a tempogram inside a sane range (about 70 to 180, to avoid half and double tempo), a constant grid fitted to the onset strength, BPM refined by least squares, then a confidence score. Tracks whose beats drift from a constant grid (live drums, tempo changes) are flagged and left alone, not written badly. Constant tempo first; variable-tempo grids (several markers in both programs) later. Results still need checking by ear on a few tracks.
+
+- [ ] **1. Analyzer (read-only).** `analyze_beatgrid`: first beat, BPM, confidence and a drift flag per track. New dependencies (`librosa`, `soundfile`) as an extra in `pyproject.toml`. Tested on synthetic click tracks (known BPM and offset, half and double tempo, a drifting track) and on a few real files. Playlisted tracks only by default; tracks that already have a grid are skipped unless asked.
+- [ ] **2. Rekordbox writer.** Write `PQTZ`, `PQT2` and the database BPM. Dry run first, `expected_*` from the dry run, Rekordbox closed, backup, read-back verification, journal and an undo tool, like the cue tools. Proven on a copy of the real library before touching the real one. Open question: Rekordbox may re-analyze a track and replace our grid.
+- [ ] **3. Serato writer.** The `Serato BeatGrid` tag, with the per-format timing offsets, so both programs show the same first beat. Same safety as `sync_cues_to_serato` (Serato closed, journal, verify, undo).
+- [ ] **4. Agent and docs.** Register the tools, gate the writers behind the approval step, update the README, and add evaluation cases.
+- [ ] **5. Cue points (after the grids).** First downbeat as hot cue A and phrase starts (every 16 or 32 bars) are reliable once the grid is right. Energy-based intro, drop and outro guesses are optional and would be labelled as guesses.
+
 ### Not yet verified
 
 Built and tested in code, but never checked in the real application. Most need the user, because only they can run Rekordbox and Serato.
