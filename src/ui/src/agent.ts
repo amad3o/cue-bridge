@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { encode, parseEvent, type AgentEvent, type ScreenMessage } from "./protocol";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const ROOT = path.resolve(here, "..", "..");
+export const ROOT = path.resolve(here, "..", "..", "..");
 
 export function pythonPath(): string {
   return process.env.CUEBRIDGE_PYTHON || path.join(ROOT, ".venv", "bin", "python");

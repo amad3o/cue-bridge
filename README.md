@@ -30,7 +30,7 @@ make setup      # creates .venv and installs the dependencies and dev tools
 make check      # ruff, then the Python and screen tests (what CI runs); `make test`, `make test-ui` and `make lint` run one each
 ```
 
-The built-in agent's screen (`ui/`) is a small Node app and needs Node 20 or newer; `make agent` installs its packages the first time (`make setup-ui` does it by hand and tells Dropbox to leave `ui/node_modules` alone). The MCP server needs no Node.
+The built-in agent's screen (`src/ui/`) is a small Node app and needs Node 20 or newer; `make agent` installs its packages the first time (`make setup-ui` does it by hand and tells Dropbox to leave `src/ui/node_modules` alone). The MCP server needs no Node.
 
 Or by hand:
 
@@ -62,7 +62,7 @@ Start a new session (or run `/mcp`) and `cuebridge` should show as connected. Th
 
 ### Or use the built-in agent
 
-CueBridge also has its own terminal chat, so you don't need Claude Code or Claude Desktop. The screen is an [Ink](https://github.com/vadimdemedes/ink) app (`ui/`). It starts the Python agent (`src/cuebridge/agent/`, built on the [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)), which starts the same MCP server, so it has every tool above. The two talk over stdin and stdout, one JSON object per line (described at the top of `src/cuebridge/agent/protocol.py`).
+CueBridge also has its own terminal chat, so you don't need Claude Code or Claude Desktop. The screen is an [Ink](https://github.com/vadimdemedes/ink) app (`src/ui/`). It starts the Python agent (`src/cuebridge/agent/`, built on the [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)), which starts the same MCP server, so it has every tool above. The two talk over stdin and stdout, one JSON object per line (described at the top of `src/cuebridge/agent/protocol.py`).
 
 1. Put your key in `.env` (git ignores this file):
 
@@ -174,7 +174,8 @@ src/cuebridge/
   tools/           the MCP tools, one module per area: libraries, reports, playlists, repairs, cues, serato
                    (common.py holds the server, the loaded-library state and the error translation)
   mcp_server.py    the entry point: imports the tools (which registers them) and starts the server
-tests/             mirrors the above: agent/, apple_music/, rekordbox/, serato/, cues/, library/, server/; helpers/ and fixtures/
+src/ui/            the agent's screen (Ink, TypeScript): src/App.tsx, state.ts (events to what is shown), agent.ts (starts the Python agent)
+tests/             mirrors src/cuebridge: agent/, apple_music/, rekordbox/, serato/, cues/, library/, server/; helpers/ and fixtures/
 docs/ROADMAP.md    completed work, known issues and what's next
-ui/                the agent's screen (Ink, TypeScript): src/App.tsx, state.ts (events to what is shown), agent.ts (starts the Python agent)
+
 ```

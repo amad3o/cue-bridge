@@ -1,6 +1,6 @@
 """The conversation between the agent and its screen: one JSON object per line.
 
-The agent (Python) owns the model, the tools and the approval rule. The screen (the Ink app in ui/) only shows
+The agent (Python) owns the model, the tools and the approval rule. The screen (the Ink app in src/ui/) only shows
 things and passes back what the user typed. They talk over the agent's stdin and stdout.
 
 Agent to screen (stdout), each a JSON object with a "type":

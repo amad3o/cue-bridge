@@ -1,4 +1,4 @@
-"""`python -m cuebridge.agent` starts the headless agent (the Ink screen in ui/ launches it this way)."""
+"""`python -m cuebridge.agent` starts the headless agent (the Ink screen in src/ui/ launches it this way)."""
 
 from cuebridge.agent.runner import main
 

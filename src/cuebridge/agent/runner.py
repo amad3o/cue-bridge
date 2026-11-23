@@ -1,6 +1,6 @@
 """CueBridge's own agent: calls the CueBridge tools through the OpenAI Agents SDK, with a screen of its own.
 
-Run it with:  make agent      (the Ink screen in ui/ starts this module as a child process)
+Run it with:  make agent      (the Ink screen in src/ui/ starts this module as a child process)
 
 This process has no screen. It reads the user's messages from stdin and writes events to stdout, one JSON
 object per line (see cuebridge.agent.protocol). It starts the MCP server (`python -m cuebridge.mcp_server`) as

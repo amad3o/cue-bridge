@@ -29,18 +29,18 @@ setup-db: setup
 	$(PY) -m pip install -e ".[rekordbox-db]"
 
 setup-ui:
-	cd ui && npm install
+	cd src/ui && npm install
 	# keep node_modules out of Dropbox: it is large, regenerable and slow to sync
-	xattr -w com.dropbox.ignored 1 ui/node_modules 2>/dev/null || true
+	xattr -w com.dropbox.ignored 1 src/ui/node_modules 2>/dev/null || true
 
-ui/node_modules:
+src/ui/node_modules:
 	$(MAKE) setup-ui
 
 test: $(PY)
 	.venv/bin/python -m pytest -q
 
-test-ui: ui/node_modules
-	cd ui && npm run typecheck && npm test
+test-ui: src/ui/node_modules
+	cd src/ui && npm run typecheck && npm test
 
 lint: $(PY)
 	.venv/bin/ruff check src tests
@@ -48,5 +48,5 @@ lint: $(PY)
 check: lint test test-ui
 
 # The Ink screen starts the Python agent (src/cuebridge/agent/) as a child process.
-agent: $(PY) ui/node_modules
-	cd ui && npm start --silent
+agent: $(PY) src/ui/node_modules
+	cd src/ui && npm start --silent
