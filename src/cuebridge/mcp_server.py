@@ -10,6 +10,7 @@ called directly as well as through MCP.
 import logging
 import os
 
+from cuebridge.tools.beatgrid import analyze_beatgrid
 from cuebridge.tools.common import mcp, reset_state
 from cuebridge.tools.cues import (
     duplicate_memory_cues_to_hot_cues,
@@ -67,6 +68,7 @@ __all__ = [
     "main",
     "mcp",
     "reset_state",
+    "analyze_beatgrid",
     "audit_music_library",
     "check_sync_status",
     "clean_up_stale_duplicates",

@@ -44,6 +44,8 @@ pytest                      # optional: run the tests
 
 `make setup-db` also installs the optional Rekordbox database packages (the `rekordbox-db` extra in `pyproject.toml`; it needs `brew install sqlcipher` first; see [Updating Rekordbox playlists directly](#updating-rekordbox-playlists-directly)).
 
+The optional `beatgrid` extra (`pip install -e ".[beatgrid]"`, librosa and soundfile) is only for `analyze_beatgrid`, a read-only tool that estimates a track's BPM and first beat from the audio. It is an experiment: see section 13 of the [roadmap](docs/ROADMAP.md) for how far it can be trusted.
+
 ### Export your Rekordbox library
 
 In Rekordbox, choose **File → Export Collection in xml format** and save the file somewhere you can find it. CueBridge can read that XML file, but it is no longer needed for the cue sync or the sync check: those read Rekordbox's live database (cues, beat grids and all). The export is a fallback, and what the two XML editing tools work on. An iTunes `Library.xml` won't work.

@@ -2,7 +2,7 @@
 VENV := .venv
 PY := $(VENV)/bin/python
 
-.PHONY: help setup setup-db setup-ui test test-ui lint check agent
+.PHONY: help setup setup-db setup-ui test test-ui lint check agent eval-beatgrid
 
 help:
 	@echo "make setup     create .venv and install the dependencies and dev tools"
@@ -12,6 +12,7 @@ help:
 	@echo "make test-ui   typecheck and test the terminal screen"
 	@echo "make lint      run ruff"
 	@echo "make check     lint, then both test suites (what CI runs)"
+	@echo "make eval-beatgrid ARGS=\"<music folder> --limit 100\"  score the beatgrid analyzer against Serato's grids"
 	@echo "make agent     chat with CueBridge's own agent (needs OPENAI_API_KEY)"
 
 $(PY):
@@ -50,3 +51,7 @@ check: lint test test-ui
 # The Ink screen starts the Python agent (src/cuebridge/agent/) as a child process.
 agent: $(PY) src/ui/node_modules
 	cd src/ui && npm start --silent
+
+# Not part of `make check`: it decodes audio, so it is slow. Needs the beatgrid extra and a music folder Serato has analysed.
+eval-beatgrid: $(PY)
+	$(PY) evals/beatgrid_vs_serato.py $(ARGS)

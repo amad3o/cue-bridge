@@ -72,6 +72,7 @@ class TestRegistration:
             "undo_rekordbox_cue_additions",
             "compare_cues",
             "audit_music_library",
+            "analyze_beatgrid",
             "set_default_cue",
             "duplicate_memory_cues_to_hot_cues",
             "sync_cues_to_serato",

@@ -19,6 +19,9 @@ dev = ["pytest", "httpx", "ruff>=0.15"]
 # database. SQLCipher must be installed first (see `make setup-db`).
 rekordbox-db = ["pyrekordbox>=0.5", "sqlcipher3>=0.6"]
 
+# Needed only for analyze_beatgrid (our own BPM and first-beat analysis of the audio).
+beatgrid = ["librosa>=0.10", "soundfile>=0.12"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
