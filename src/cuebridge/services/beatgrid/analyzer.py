@@ -5,13 +5,20 @@ to it, then refine the grid on the audio itself (the sharpest attack near each g
 those attacks). A track whose beats don't sit on one constant grid (live drums, tempo changes, a long beatless intro) is
 flagged as not steady, and the caller should leave it alone rather than write a bad grid.
 
-librosa and soundfile are an optional extra (`pip install -e ".[beatgrid]"`), imported only when a file is analysed.
+librosa and soundfile are an optional extra (`pip install -e ".[beatgrid]"`). The MCP server imports this module at
+startup, so it must import without them: librosa is imported when a file is analysed, and numpy (which comes with it)
+may be missing.
 """
+
+from __future__ import annotations  # the np.ndarray annotations must not need numpy at import time
 
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:  # only used after _load, which says how to install the extra
+    np = None
 
 # Bump when the method changes: the evaluation caches its scores per version.
 VERSION = "8"

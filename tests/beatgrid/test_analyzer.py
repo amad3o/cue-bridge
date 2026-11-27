@@ -1,9 +1,10 @@
 """Beatgrid analysis on synthetic tracks whose BPM and first beat are known."""
 
-import numpy as np
 import pytest
 
+# The beatgrid extra is optional (CI doesn't install it): skip before importing anything that comes with it.
 pytest.importorskip("librosa")
+np = pytest.importorskip("numpy")
 soundfile = pytest.importorskip("soundfile")
 
 from cuebridge.services.beatgrid import analyzer  # noqa: E402
