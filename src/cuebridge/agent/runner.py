@@ -22,6 +22,7 @@ from agents.mcp import MCPServerStdio
 from dotenv import load_dotenv
 
 from cuebridge.agent.protocol import JsonUI, parse_arguments
+from cuebridge.instructions import GUIDANCE
 
 SRC_DIR = Path(__file__).resolve().parents[2]  # src/, which holds the package
 PROJECT_DIR = SRC_DIR.parent  # the repository root, which holds .env, tests and the virtualenv
@@ -29,24 +30,14 @@ MAX_TURNS = 40
 # Some tools are slow (reading the open Music app takes about half a minute; a Serato sync touches many files).
 TOOL_TIMEOUT_SECONDS = 600
 
-INSTRUCTIONS = """\
-You help one DJ keep their library in step across Apple Music, Rekordbox and Serato, using the CueBridge tools.
-Apple Music holds the tracks and playlists, Rekordbox holds the cues and USB sets, and Serato plays from the
-Apple Music playlists.
-
-Rules:
-- Load the libraries before anything that needs them (load_apple_music_library with no path reads the open
-  Music app; load_rekordbox_library needs the path of a Rekordbox XML export).
-- Only tracks that are in a playlist matter. Ignore Apple Music tracks that are in no playlist when comparing
-  or transferring to Rekordbox.
-- Every tool that changes something starts as a dry run. Run the dry run, show the user what would change
-  in plain words, and only then call the tool again with dry_run=false and the expected counts from the dry
-  run. The user is asked to confirm each real change, so never claim something changed until the tool says so.
-- Rekordbox and Serato DJ Pro must be closed for any write. If a tool says one is running, tell the user.
-- Every change has an undo tool. Tell the user which one to use and the journal it reports.
-- Tools return pages of results: use limit and offset for more rather than guessing.
+# The shared rules, plus what is only true of this agent.
+INSTRUCTIONS = (
+    GUIDANCE
+    + """\
+- This program also asks the user to confirm each real change before it runs. If they decline, don't retry it.
 - Keep answers short. Report what the tools returned, including failures, exactly.
 """
+)
 
 # Asks the user about one call that would really change something; returns True to go ahead.
 Ask = Callable[[str, dict[str, Any] | None], Awaitable[bool]]

@@ -8,29 +8,14 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
+from cuebridge.instructions import GUIDANCE
 from cuebridge.services.apple_music.service import get_apple_music_library
 from cuebridge.services.apple_music.xml_parser import MusicLibrary
 from cuebridge.services.compare import drift
 from cuebridge.services.rekordbox import db as rekordbox_db
 from cuebridge.services.rekordbox.service import LibraryError, RekordboxLibrary, get_rekordbox_library
 
-mcp = MCPServer(
-    "cuebridge",
-    instructions=(
-        "CueBridge reads Rekordbox library exports (the XML file from Rekordbox's "
-        "File > Export Collection in xml format) and inspects their cue points. "
-        "Call load_rekordbox_library first with the path to the XML file. Tools "
-        "return summaries and pages of results, so use limit and offset to see "
-        "more. The writing tools (set_default_cue and "
-        "duplicate_memory_cues_to_hot_cues) edit Rekordbox's database, which "
-        "must be closed. They default to a dry run: always show the user what "
-        "would change, and get their go-ahead, before calling them with "
-        "dry_run=false and expected_cues from the dry run. "
-        "sync_cues_to_serato goes further and edits the user's audio files: "
-        "Serato DJ Pro must be closed, and dry_run=false needs expected_files "
-        "from the dry run. undo_serato_sync reverses it."
-    ),
-)
+mcp = MCPServer("cuebridge", instructions=GUIDANCE)
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 

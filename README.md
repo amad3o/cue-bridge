@@ -90,7 +90,7 @@ There are three processes:
 ### From prompt to answer
 
 1. The screen sends your message to the agent as one line of JSON (`agent/protocol.py` lists every message).
-2. The agent calls the model with its `INSTRUCTIONS` prompt, the conversation (including earlier tool results) and every tool's name, description and argument schema.
+2. The agent calls the model with its prompt (the shared rules in `instructions.py`, which the MCP server also sends, plus two of its own), the conversation (including earlier tool results) and every tool's name, description and argument schema.
 3. The model picks a tool. There is no router in our code: it chooses from the **docstrings** and **type hints**.
 4. The agent pauses every tool not marked read-only, then reads the arguments. Dry runs continue silently; `dry_run=false` or unreadable arguments ask you.
 5. The server runs it: a thin function in `tools/` calls the logic in `services/`. The result goes back to the model.
@@ -103,14 +103,13 @@ The screen turns events into state (`lib/state.ts`) and draws it: a spinner, a l
 - The screen never receives tool results, so a dry-run preview is the model's retelling.
 - A preview isn't guaranteed before approval: the model can dry-run and request the real write in the same turn. The approval panel shows only the call's arguments. (Found by reading the code, not reproduced.)
 - If a turn fails, it's left out of the history, so the model forgets any write made in it.
-- The agent's prompt is separate from the MCP server's instructions (`tools/common.py`), and we found nothing in the SDK that passes those to the model.
 - History is never trimmed or saved. SDK tracing is off.
 
 ### Where to look
 
 | Problem | Look in |
 | --- | --- |
-| Wrong tool or arguments | tool docstrings, type hints, `INSTRUCTIONS` |
+| Wrong tool or arguments | tool docstrings, type hints, `instructions.py` |
 | Approval behaviour | `agent/runner.py` and the tool's annotations |
 | Wrong result | `tools/`, then `services/` |
 | Wrong display | `src/ui/lib/state.ts` and `src/ui/components/` |
