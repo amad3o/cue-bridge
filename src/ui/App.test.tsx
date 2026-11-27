@@ -20,7 +20,7 @@ function fakeAgent() {
 }
 
 const ready: AgentEvent = { type: "ready", tools: 27, gated: 14 };
-const request: AgentEvent = { type: "approval_request", id: "approval-1", name: "sync_cues_to_serato", arguments: { dry_run: false, note: "[bold]x[/bold]" } };
+const request: AgentEvent = { type: "approval_request", id: "approval-1", name: "sync_cues_to_serato", arguments: { dry_run: false, note: "[bold]x[/bold]" }, preview: ["Would change 2 files.", "files: 2 item(s)"] };
 
 describe("App", () => {
   it("shows the banner, sends what the user types, and shows the reply", async () => {
@@ -55,6 +55,19 @@ describe("App", () => {
     expect(frame).toContain("sync_cues_to_serato");
     expect(frame).toContain("dry_run");
     expect(frame).toContain("[bold]x[/bold]");
+  });
+
+  it("shows what the dry run said in the approval panel", async () => {
+    const agent = fakeAgent();
+    const { lastFrame } = render(<App connect={agent.connect} />);
+    agent.emit(ready);
+    agent.emit(request);
+    await tick();
+    const frame = lastFrame() ?? "";
+
+    expect(frame).toContain("What its dry run said");
+    expect(frame).toContain("Would change 2 files.");
+    expect(frame).toContain("files: 2 item(s)");
   });
 
   it("sends approve: true only for y", async () => {

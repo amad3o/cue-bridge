@@ -18,7 +18,7 @@ def test_the_server_sends_the_shared_guidance():
 
 def test_the_agent_prompt_is_the_shared_guidance_plus_its_own_rules():
     assert runner.INSTRUCTIONS.startswith(GUIDANCE)
-    assert "confirm each real change" in runner.INSTRUCTIONS[len(GUIDANCE) :]
+    assert "asks the user to confirm" in runner.INSTRUCTIONS[len(GUIDANCE) :]
 
 
 def test_every_tool_the_guidance_names_exists():

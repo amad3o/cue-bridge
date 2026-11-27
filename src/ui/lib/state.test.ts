@@ -42,8 +42,8 @@ describe("reduce", () => {
   });
 
   it("holds an approval request until it is answered", () => {
-    let s = feed([{ type: "approval_request", id: "approval-1", name: "sync_cues_to_serato", arguments: { dry_run: false } }]);
-    expect(s.approval).toEqual({ id: "approval-1", name: "sync_cues_to_serato", arguments: { dry_run: false } });
+    let s = feed([{ type: "approval_request", id: "approval-1", name: "sync_cues_to_serato", arguments: { dry_run: false }, preview: ["2 files"] }]);
+    expect(s.approval).toEqual({ id: "approval-1", name: "sync_cues_to_serato", arguments: { dry_run: false }, preview: ["2 files"] });
     s = reduce(s, { type: "answered" });
     expect(s.approval).toBeNull();
   });
@@ -56,7 +56,7 @@ describe("reduce", () => {
   });
 
   it("closing drops any open question and says so", () => {
-    let s = feed([{ type: "approval_request", id: "approval-1", name: "x", arguments: null }]);
+    let s = feed([{ type: "approval_request", id: "approval-1", name: "x", arguments: null, preview: [] }]);
     s = reduce(s, { type: "closed", note: "The agent stopped." });
     expect(s).toMatchObject({ closed: true, approval: null, thinking: false });
     expect(s.entries.at(-1)).toEqual({ kind: "note", text: "The agent stopped." });

@@ -122,6 +122,16 @@ export function ApprovalPanel({ approval, selected }: { approval: Approval; sele
           )}
         </Box>
       </Box>
+      <Box marginTop={1} marginLeft={2} flexDirection="column">
+        <Text bold>What its dry run said</Text>
+        <Box marginLeft={2} flexDirection="column">
+          {(approval.preview ?? []).map((line, index) => (
+            <Text key={index} dimColor={index > 0}>
+              {line}
+            </Text>
+          ))}
+        </Box>
+      </Box>
       <Box marginTop={1} marginLeft={2} flexDirection="row" gap={2}>
         {options.map((option, index) => (
           <Text key={option} color={selected === index ? "green" : "gray"} bold={selected === index}>

@@ -10,7 +10,7 @@ export type Entry =
   | { kind: "error"; message: string }
   | { kind: "note"; text: string };
 
-export type Approval = { id: string; name: string; arguments: Args };
+export type Approval = { id: string; name: string; arguments: Args; preview: string[] };
 
 export type State = {
   entries: Entry[];
@@ -68,7 +68,7 @@ function applyEvent(state: State, event: AgentEvent): State {
       return { ...state, entries };
     }
     case "approval_request":
-      return { ...state, approval: { id: event.id, name: event.name, arguments: event.arguments } };
+      return { ...state, approval: { id: event.id, name: event.name, arguments: event.arguments, preview: event.preview } };
     case "reply":
       return { ...state, entries: [...state.entries, { kind: "reply", text: event.text }] };
     case "error":

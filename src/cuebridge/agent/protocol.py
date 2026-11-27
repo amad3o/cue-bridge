@@ -8,7 +8,8 @@ Agent to screen (stdout), each a JSON object with a "type":
   thinking          on                                   the model or a tool is working (true) or done (false)
   tool_start        id, name, arguments                  a tool call began
   tool_end          id, name, seconds, failure           it finished; failure is a reason or null
-  approval_request  id, name, arguments                  a call would really change something: waiting for an answer
+  approval_request  id, name, arguments, preview         a call would really change something: waiting for an answer;
+                                                         preview is what its dry run said, as a list of lines
   reply             text                                 the model's answer (markdown)
   error             message                              the turn failed; the chat goes on
 
@@ -163,11 +164,11 @@ class JsonUI:
     def show_error(self, message: str) -> None:
         self.emit("error", message=message)
 
-    async def ask(self, name: str, arguments: dict[str, Any] | None) -> bool:
+    async def ask(self, name: str, arguments: dict[str, Any] | None, preview: list[str]) -> bool:
         """Ask the screen about one real change. Only a matching approval_response with approve === true goes ahead."""
         self.approvals += 1
         request_id = f"approval-{self.approvals}"
-        self.emit("approval_request", id=request_id, name=name, arguments=arguments)
+        self.emit("approval_request", id=request_id, name=name, arguments=arguments, preview=preview)
 
         while True:
             message = await self.incoming.get()

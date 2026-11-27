@@ -8,7 +8,7 @@ export type AgentEvent =
   | { type: "thinking"; on: boolean }
   | { type: "tool_start"; id: string; name: string; arguments: Args }
   | { type: "tool_end"; id: string; name: string; seconds: number | null; failure: string | null }
-  | { type: "approval_request"; id: string; name: string; arguments: Args }
+  | { type: "approval_request"; id: string; name: string; arguments: Args; preview: string[] }
   | { type: "reply"; text: string }
   | { type: "error"; message: string };
 

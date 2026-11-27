@@ -146,14 +146,15 @@ class TestApproval:
             for message in incoming:
                 ui.incoming.put_nowait(message)
 
-            return await ui.ask("sync_cues_to_serato", {"dry_run": False}), ui
+            return await ui.ask("sync_cues_to_serato", {"dry_run": False}, ["would change 2 files"]), ui
 
         return (*asyncio.run(go()), events(sent))
 
     def test_the_request_names_the_tool_and_arguments(self):
         _, _, sent = self.ask(None)
 
-        assert sent == [{"type": "approval_request", "id": "approval-1", "name": "sync_cues_to_serato", "arguments": {"dry_run": False}}]
+        assert sent == [{"type": "approval_request", "id": "approval-1", "name": "sync_cues_to_serato", "arguments": {"dry_run": False},
+                         "preview": ["would change 2 files"]}]
 
     def test_only_a_real_true_with_the_right_id_is_a_yes(self):
         assert self.ask({"type": "approval_response", "id": "approval-1", "approve": True})[0] is True
@@ -190,8 +191,8 @@ class TestApproval:
             ui = JsonUI(sent.append)
             ui.incoming.put_nowait(None)
             ui.incoming.put_nowait(None)
-            await ui.ask("a", {})
-            await ui.ask("b", {})
+            await ui.ask("a", {}, [])
+            await ui.ask("b", {}, [])
 
         asyncio.run(go())
         assert [e["id"] for e in events(sent)] == ["approval-1", "approval-2"]

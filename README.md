@@ -67,7 +67,7 @@ The tools that change something follow one pattern:
 - **Dry run by default.** Nothing is written until `dry_run=false`.
 - **Guarded writes.** Edits to Rekordbox's database and Serato's tags require Rekordbox or Serato DJ Pro (respectively) to be closed, keep a backup or the original bytes, write a journal, read the result back, and can be undone. Most also require the counts or files from the dry run.
 - **The XML export** only edits the XML file you import into Rekordbox. It has no undo tool.
-- **Approval.** The built-in agent also stops before any real change and asks Yes or No, starting on No. This is enforced in Python (`agent/runner.py`); neither the model nor the screen can skip it. In other clients, you rely on that client's permission prompts.
+- **Approval.** The built-in agent refuses a real change unless the same call's dry run happened before your latest message. It then asks Yes or No, starting on No, and shows what that dry run said. This is enforced in Python (`agent/runner.py`, `agent/previews.py`); neither the model nor the screen can skip it. In other clients, you rely on that client's permission prompts.
 
 Rekordbox opening a database with cues added by the two cue tools hasn't been checked in the app yet.
 
@@ -92,7 +92,7 @@ There are three processes:
 1. The screen sends your message to the agent as one line of JSON (`agent/protocol.py` lists every message).
 2. The agent calls the model with its prompt (the shared rules in `instructions.py`, which the MCP server also sends, plus two of its own), the conversation (including earlier tool results) and every tool's name, description and argument schema.
 3. The model picks a tool. There is no router in our code: it chooses from the **docstrings** and **type hints**.
-4. The agent pauses every tool not marked read-only, then reads the arguments. Dry runs continue silently; `dry_run=false` or unreadable arguments ask you.
+4. The agent pauses every tool not marked read-only, then reads the arguments. Dry runs continue silently. A real change (`dry_run=false`) is refused unless its dry run came before your latest message; otherwise it asks you. Unreadable arguments are refused.
 5. The server runs it: a thin function in `tools/` calls the logic in `services/`. The result goes back to the model.
 6. The model calls another tool or answers (at most 40 model turns per run). The reply arrives all at once, with no streaming.
 
@@ -100,9 +100,9 @@ The screen turns events into state (`lib/state.ts`) and draws it: a spinner, a l
 
 ### Current limitations of the agent
 
-- The screen never receives tool results, so a dry-run preview is the model's retelling.
-- A preview isn't guaranteed before approval: the model can dry-run and request the real write in the same turn. The approval panel shows only the call's arguments. (Found by reading the code, not reproduced.)
-- If a turn fails, it's left out of the history, so the model forgets any write made in it.
+- Apart from the dry-run result in the approval panel, the screen never receives tool results, so what you read in a reply is the model's retelling.
+- That panel shows what the dry run said at the time, shortened. The tools' own expected counts are what catch a library that changed since.
+- If a turn fails, it's left out of the history, so the model forgets any write made in it (and any dry run, which then has to be repeated).
 - History is never trimmed or saved. SDK tracing is off.
 
 ### Where to look

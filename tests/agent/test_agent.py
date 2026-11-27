@@ -42,6 +42,18 @@ class ScriptedModel(Model):
         raise NotImplementedError
 
 
+def previewed(*calls, result="dry run: 2 changes"):
+    """The history of an earlier turn in which each of these (arguments of sync_thing) had its dry run and the user saw it."""
+    history = [{"role": "user", "content": "preview it"}]
+
+    for number, arguments in enumerate(calls):
+        arguments = {**arguments, "dry_run": True}
+        history.append({"type": "function_call", "name": "sync_thing", "arguments": json.dumps(arguments), "call_id": f"p{number}"})
+        history.append({"type": "function_call_output", "call_id": f"p{number}", "output": result})
+
+    return [*history, {"role": "assistant", "content": "This is what would change."}]
+
+
 class World:
     """A pretend library: a tool that writes (and so needs approval) and one that only reads, both recording their calls."""
 
@@ -50,6 +62,8 @@ class World:
         self.reads = 0
         self.asked = []
         self.answer = True
+        self.shown = []
+        self.history = []
 
         @function_tool(name_override="sync_thing", needs_approval=True)
         def sync_thing(dry_run: bool = True, note: str = "") -> str:
@@ -63,14 +77,15 @@ class World:
 
         self.tools = [sync_thing, look_at_thing]
 
-    async def ask(self, name, arguments):
+    async def ask(self, name, arguments, preview):
         self.asked.append((name, arguments))
+        self.shown.append(preview)
         return self.answer
 
     def run(self, *replies):
         self.model = ScriptedModel(*replies)
         agent = Agent(name="test", model=self.model, tools=self.tools)
-        return asyncio.run(agent_module.run_turn(agent, [{"role": "user", "content": "go"}], ask=self.ask))
+        return asyncio.run(agent_module.run_turn(agent, [*self.history, {"role": "user", "content": "go"}], ask=self.ask))
 
 
 @pytest.fixture
@@ -93,6 +108,7 @@ class TestTheApprovalGate:
         assert world.asked == []
 
     def test_a_real_change_asks_first_and_runs_when_approved(self, world):
+        world.history = previewed({"note": "x"})
         result = world.run([call("sync_thing", {"dry_run": False, "note": "x"}, "c1")], [say("done")])
 
         assert world.asked == [("sync_thing", {"dry_run": False, "note": "x"})]
@@ -101,6 +117,7 @@ class TestTheApprovalGate:
 
     def test_a_refused_change_does_not_run_and_the_model_is_told(self, world):
         world.answer = False
+        world.history = previewed({})
         result = world.run([call("sync_thing", {"dry_run": False}, "c1")], [say("ok, nothing changed")])
 
         assert world.asked == [("sync_thing", {"dry_run": False})]
@@ -116,6 +133,7 @@ class TestTheApprovalGate:
         assert world.asked == []
 
     def test_only_the_real_change_in_a_mixed_batch_is_asked_about(self, world):
+        world.history = previewed({})
         world.run(
             [
                 call("sync_thing", {"dry_run": True}, "c1"),
@@ -129,20 +147,10 @@ class TestTheApprovalGate:
         assert sorted(world.writes) == [False, True]
         assert world.reads == 1
 
-    def test_a_dry_run_then_the_real_change_in_two_steps(self, world):
-        world.run(
-            [call("sync_thing", {"dry_run": True}, "c1")],
-            [call("sync_thing", {"dry_run": False}, "c2")],
-            [say("applied")],
-        )
-
-        assert world.writes == [True, False]
-        assert world.asked == [("sync_thing", {"dry_run": False})]
-
     def test_a_refusal_in_one_step_does_not_block_a_later_approved_one(self, world):
         answers = iter([False, True])
 
-        async def ask(name, arguments):
+        async def ask(name, arguments, preview):
             world.asked.append((name, arguments))
             return next(answers)
 
@@ -152,7 +160,8 @@ class TestTheApprovalGate:
             [say("done")],
         )
         agent = Agent(name="test", model=world.model, tools=world.tools)
-        asyncio.run(agent_module.run_turn(agent, [{"role": "user", "content": "go"}], ask=ask))
+        history = previewed({"note": "first"}, {"note": "second"})
+        asyncio.run(agent_module.run_turn(agent, [*history, {"role": "user", "content": "go"}], ask=ask))
 
         assert [a["note"] for _, a in world.asked] == ["first", "second"]
         assert world.writes == [False]
@@ -173,7 +182,7 @@ class TestWithTheScreenAttached:
             for answer in answers:
                 ui.incoming.put_nowait({"type": "approval_response", "id": "approval-1", **answer})
 
-            return await agent_module.run_turn(agent, [{"role": "user", "content": "go"}], ui.ask, ui)
+            return await agent_module.run_turn(agent, [*previewed({}, {"note": "n"}), {"role": "user", "content": "go"}], ui.ask, ui)
 
         asyncio.run(go())
         return [json.loads(line) for line in sent]
@@ -193,6 +202,7 @@ class TestWithTheScreenAttached:
 
         assert request["name"] == "sync_thing"
         assert request["arguments"] == {"dry_run": False, "note": "n"}
+        assert request["preview"] == ["dry run: 2 changes"]
         assert world.writes == [False]
 
     @pytest.mark.parametrize("answer", [{"approve": False}, {"approve": "true"}, {"approve": 1}, {"approve": "yes"}, {}])
@@ -209,7 +219,7 @@ class TestWithTheScreenAttached:
             ui = JsonUI(lambda line: None)
             ui.incoming.put_nowait({"type": "approval_response", "id": "approval-99", "approve": True})
             ui.incoming.put_nowait(None)  # then the screen goes away
-            await agent_module.run_turn(agent, [{"role": "user", "content": "go"}], ui.ask, ui)
+            await agent_module.run_turn(agent, [*previewed({}), {"role": "user", "content": "go"}], ui.ask, ui)
 
         asyncio.run(go())
         assert world.writes == []
@@ -221,7 +231,7 @@ class TestWithTheScreenAttached:
         async def go():
             ui = JsonUI(lambda line: None)
             ui.incoming.put_nowait(None)
-            await agent_module.run_turn(agent, [{"role": "user", "content": "go"}], ui.ask, ui)
+            await agent_module.run_turn(agent, [*previewed({}), {"role": "user", "content": "go"}], ui.ask, ui)
 
         asyncio.run(go())
         assert world.writes == []
@@ -289,11 +299,69 @@ class TestToolNeedsApproval:
 
 
 class TestMalformedCalls:
-    def test_a_call_whose_arguments_cannot_be_read_is_asked_about(self, world):
+    def test_a_call_whose_arguments_cannot_be_read_is_refused_without_asking(self, world):
+        world.history = previewed({})
         world.run([ResponseFunctionToolCall(name="sync_thing", arguments="{not json", call_id="c1", type="function_call")], [say("done")])
 
-        assert [name for name, _ in world.asked] == ["sync_thing"]
-        assert world.asked[0][1] is None
+        assert world.asked == []
+        assert world.writes == []
+
+
+class TestAPreviewComesFirst:
+    """A real change is only offered when its dry run came before the user's latest message."""
+
+    def refused(self, world):
+        return "the user hasn't seen a dry run" in json.dumps(world.model.inputs[-1], default=str)
+
+    def test_a_real_change_with_no_dry_run_is_refused_without_asking(self, world):
+        world.run([call("sync_thing", {"dry_run": False}, "c1")], [say("I'll preview first")])
+
+        assert world.asked == [] and world.writes == []
+        assert self.refused(world)
+
+    def test_a_dry_run_in_the_same_turn_does_not_count(self, world):
+        world.run([call("sync_thing", {"dry_run": True}, "c1")], [call("sync_thing", {"dry_run": False}, "c2")], [say("here is the preview")])
+
+        assert world.writes == [True] and world.asked == []
+        assert self.refused(world)
+
+    def test_across_two_real_turns_the_change_is_offered_with_what_the_dry_run_said(self, world):
+        # the second turn's history is what the SDK itself produced from the first
+        first = world.run([call("sync_thing", {"note": "x"}, "c1")], [say("2 changes. Apply?")])
+        world.history = first.to_input_list()
+        world.run([call("sync_thing", {"dry_run": False, "note": "x"}, "c2")], [say("applied")])
+
+        assert world.writes == [True, False]
+        assert world.shown == [["dry run: 2 changes"]]
+
+    def test_a_dry_run_of_something_else_does_not_cover_the_change(self, world):
+        world.history = previewed({"note": "r&b only"})
+        world.run([call("sync_thing", {"dry_run": False, "note": "everything"}, "c1")], [say("no")])
+
+        assert world.asked == [] and world.writes == []
+
+    def test_one_dry_run_covers_one_change_in_a_turn(self, world):
+        world.history = previewed({})
+        world.run([call("sync_thing", {"dry_run": False}, "c1")], [call("sync_thing", {"dry_run": False}, "c2")], [say("done")])
+
+        assert world.writes == [False] and len(world.asked) == 1
+
+    def test_one_dry_run_covers_one_change_across_turns(self, world):
+        world.history = previewed({})
+        applied = world.run([call("sync_thing", {"dry_run": False}, "c1")], [say("applied")])
+        world.history = applied.to_input_list()
+        world.run([call("sync_thing", {"dry_run": False}, "c2")], [say("preview again first")])
+
+        assert world.writes == [False] and len(world.asked) == 1
+
+    def test_declining_keeps_the_preview_for_when_the_user_changes_their_mind(self, world):
+        world.history = previewed({})
+        world.answer = False
+        declined = world.run([call("sync_thing", {"dry_run": False}, "c1")], [say("ok")])
+        world.history, world.answer = declined.to_input_list(), True
+        world.run([call("sync_thing", {"dry_run": False}, "c2")], [say("applied")])
+
+        assert world.writes == [False] and len(world.asked) == 2
 
 
 @pytest.fixture(scope="module")

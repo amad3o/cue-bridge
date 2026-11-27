@@ -5,8 +5,9 @@ Run it with:  make agent      (the Ink screen in src/ui/ starts this module as a
 This process has no screen. It reads the user's messages from stdin and writes events to stdout, one JSON
 object per line (see cuebridge.agent.protocol). It starts the MCP server (`python -m cuebridge.mcp_server`) as
 a subprocess and gets all its tools. Reading and dry-run calls go straight through. Any call that would really
-change something (a write tool with dry_run=false) stops and asks the screen first. The approval is enforced
-here, not by the model and not by the screen: the model cannot skip it, and the screen can only say no.
+change something (a write tool with dry_run=false) is refused unless its dry run happened before the user's latest
+message (see cuebridge.agent.previews), and then stops and asks the screen. Both rules are enforced here, not by the
+model and not by the screen: the model cannot skip them, and the screen can only say no.
 """
 
 import asyncio
@@ -21,6 +22,7 @@ from agents import Agent, Runner, set_tracing_disabled
 from agents.mcp import MCPServerStdio
 from dotenv import load_dotenv
 
+from cuebridge.agent.previews import DECLINED, NOT_PREVIEWED, call_key, describe, is_real_change, shown_previews
 from cuebridge.agent.protocol import JsonUI, parse_arguments
 from cuebridge.instructions import GUIDANCE
 
@@ -34,13 +36,14 @@ TOOL_TIMEOUT_SECONDS = 600
 INSTRUCTIONS = (
     GUIDANCE
     + """\
-- This program also asks the user to confirm each real change before it runs. If they decline, don't retry it.
+- This program refuses a real change unless the same call's dry run came before the user's latest message, so end
+  your reply after a dry run. It then asks the user to confirm. If they decline, don't retry it.
 - Keep answers short. Report what the tools returned, including failures, exactly.
 """
 )
 
-# Asks the user about one call that would really change something; returns True to go ahead.
-Ask = Callable[[str, dict[str, Any] | None], Awaitable[bool]]
+# Asks the user about one call that would really change something, given its dry run as a few lines; True to go ahead.
+Ask = Callable[[str, dict[str, Any], list[str]], Awaitable[bool]]
 
 
 def server_params() -> dict[str, Any]:
@@ -72,26 +75,16 @@ def call_arguments(item: Any) -> dict[str, Any] | None:
     return parse_arguments(raw.get("arguments") if isinstance(raw, dict) else getattr(raw, "arguments", None))
 
 
-def is_real_change(arguments: dict[str, Any] | None) -> bool:
-    """Whether a call to a writing tool would really change something.
-
-    Every writing tool takes dry_run and defaults to true, so the call is a preview unless dry_run is
-    explicitly false. Anything that is not clearly a preview (a malformed value, or arguments that could
-    not be read at all) is asked about.
-    """
-    if arguments is None:
-        return True
-
-    return arguments.get("dry_run", True) is not True
-
-
 async def run_turn(agent: Agent, conversation: Any, ask: Ask, ui: JsonUI | None = None) -> Any:
     """Run the agent until it answers, stopping for approval on each call that would really change something.
 
     `conversation` is the list of messages so far (it may end with the user's new message). Dry runs and
-    read-only calls are approved here without asking; a refused call is reported to the model as refused.
-    With a `ui`, the screen is told when the model and tools are working, and about each tool call.
+    read-only calls are approved here without asking. A real change is refused without asking unless
+    `conversation` already holds its dry run; otherwise the user is asked. A refused call is reported to
+    the model as refused. With a `ui`, the screen is told when the model and tools are working, and about
+    each tool call.
     """
+    previews = shown_previews(conversation)  # taken before the run, so this turn's dry runs don't count
     thinking = ui.thinking if ui else nullcontext
     hooks = ui.hooks() if ui else None
 
@@ -105,10 +98,19 @@ async def run_turn(agent: Agent, conversation: Any, ask: Ask, ui: JsonUI | None 
             name = item.tool_name or "(unknown tool)"
             arguments = call_arguments(item)
 
-            if not is_real_change(arguments) or await ask(name, arguments):
+            if not is_real_change(arguments):
+                state.approve(item)
+                continue
+
+            key = None if arguments is None else call_key(name, arguments)
+
+            if key not in previews:
+                state.reject(item, rejection_message=NOT_PREVIEWED)
+            elif await ask(name, arguments, describe(previews[key])):
+                del previews[key]  # one dry run covers one real change
                 state.approve(item)
             else:
-                state.reject(item, rejection_message="The user declined this change. Nothing was changed.")
+                state.reject(item, rejection_message=DECLINED)
 
         with thinking():
             result = await Runner.run(agent, state, max_turns=MAX_TURNS, hooks=hooks)
