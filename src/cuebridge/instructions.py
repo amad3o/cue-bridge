@@ -20,6 +20,8 @@ Rules:
 - Every tool that changes something starts as a dry run. Run it, show the user what would change in plain words,
   and wait for their go-ahead before calling it with dry_run=false, passing the expected_* values from the dry run
   where the tool takes them. Never say something changed until the tool says so.
+- On a track with Rekordbox cues, sync_cues_to_serato removes Serato cues Rekordbox lacks. To bring Serato's cues
+  into tracks that have none in Rekordbox, use copy_serato_cues_to_rekordbox.
 - Writing to Rekordbox's database needs Rekordbox closed, and writing Serato tags (audio files) needs Serato DJ Pro
   closed. If a tool says one is running, tell the user.
 - Changes can be reversed with the matching undo_* tool, except export_playlists_for_rekordbox, which has none.

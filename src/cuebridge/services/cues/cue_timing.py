@@ -163,3 +163,8 @@ def refine_with_beat_grids(offset: TimingOffset, path: str | Path, rekordbox_fir
 def to_serato_ms(rekordbox_ms: int, offset: TimingOffset) -> int:
     """A Rekordbox cue position converted to Serato's: rounded half up, never below zero."""
     return max(0, math.floor(rekordbox_ms - offset.offset_ms + 0.5))
+
+
+def to_rekordbox_ms(serato_ms: int, offset: TimingOffset) -> int:
+    """The reverse of to_serato_ms: a Serato cue position converted to Rekordbox's, rounded half up, never below zero."""
+    return max(0, math.floor(serato_ms + offset.offset_ms + 0.5))

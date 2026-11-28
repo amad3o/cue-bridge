@@ -2,12 +2,14 @@ import json
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
-from serato_helpers import BPMLOCK, COLOR, make_mp3
+from serato_helpers import AUDIO_INFO_NO_LAME, BPMLOCK, COLOR, REAL_LEGACY, make_mp3, make_wav
 from test_rekordbox_db import FakeBackend, db_state
 
 from cuebridge import mcp_server as server
 from cuebridge.services.rekordbox import cue_writes as cw
 from cuebridge.services.rekordbox import db as rd
+from cuebridge.services.rekordbox import db_library
+from cuebridge.services.serato import sync as serato_sync
 from cuebridge.services.serato import tags as serato_tags
 from cuebridge.services.serato.markers import CueEntry
 
@@ -79,25 +81,26 @@ class TestDefaultCuePlan:
 REAL_CHECK = serato_tags.why_it_may_have_cues  # kept before the fixture replaces it
 
 
+@pytest.fixture
+def files(env, monkeypatch):
+    """A database with no cues, whose tracks can be pointed at real files; the real Serato check is used."""
+    monkeypatch.setattr(serato_tags, "why_it_may_have_cues", REAL_CHECK)
+    env["write"]([])
+
+    def use(**paths):
+        state = json.loads(env["db"].read_text())
+
+        for content in state["contents"]:
+            if content["id"] in paths:
+                content["path"] = str(paths[content["id"]])
+
+        env["db"].write_text(json.dumps(state))
+
+    return use
+
+
 class TestSeratoCuesAreProtected:
     """Giving a track its first Rekordbox cue lets the sync replace its Serato cues, so check the files themselves."""
-
-    @pytest.fixture
-    def files(self, env, tmp_path, monkeypatch):
-        """Point the fake database's tracks at the given paths and use the real check."""
-        monkeypatch.setattr(serato_tags, "why_it_may_have_cues", REAL_CHECK)
-        env["write"]([])
-
-        def use(**paths):
-            state = json.loads(env["db"].read_text())
-
-            for content in state["contents"]:
-                if content["id"] in paths:
-                    content["path"] = str(paths[content["id"]])
-
-            env["db"].write_text(json.dumps(state))
-
-        return use
 
     def test_only_a_file_confirmed_to_have_no_serato_cues_gets_the_default(self, env, files, tmp_path):
         cue = CueEntry(index=1, position_ms=5000, color="#cc0000", name="")
@@ -162,6 +165,145 @@ class TestSeratoCuesAreProtected:
             cw.apply_cue_plan(plan, env["db"], env["backend"], cw.plan_default_cues)
 
         assert snap(env).cues == ()
+
+
+def cued(*cues):
+    """A Serato tag holding these (slot, ms) cues."""
+    return [COLOR, *(CueEntry(index=slot, position_ms=ms, color="#cc0000", name="") for slot, ms in cues), BPMLOCK]
+
+
+class TestCopyingSeratoCues:
+    @pytest.fixture
+    def tracks(self, env, files, tmp_path):
+        """c1: a WAV with two cues. c2: an MP3 with a LAME header and one cue. c4: no Serato cues."""
+        paths = {
+            "c1": make_wav(tmp_path / "one.wav", cued((0, 1000), (5, 90000))),
+            "c2": make_mp3(tmp_path / "two.mp3", cued((1, 2000))),
+            "c4": make_mp3(tmp_path / "none.mp3", cued()),
+        }
+        files(**paths)
+        return paths
+
+    def test_cues_keep_their_slots_with_the_timing_reversed(self, env, tracks):
+        plan = cw.plan_serato_cues(snap(env))
+
+        # kind 1 is A, 2 is B and 7 is F; a LAME MP3 is 5.5 ms later in Rekordbox, a WAV is the same
+        assert {a.content_id: a.cues for a in plan.additions} == {"c1": ((1, 1000), (7, 90000)), "c2": ((2, 2006),)}
+        assert plan.no_serato_cues == 1 and not plan.timing_unsure and not plan.sync_would_differ
+
+    def test_a_track_with_any_rekordbox_cue_is_left_as_it_is(self, env, tracks):
+        state = json.loads(env["db"].read_text())
+        state["cues"] = [["c1", 0, 500, "mine"]]
+        env["db"].write_text(json.dumps(state))
+
+        plan = cw.plan_serato_cues(snap(env))
+
+        assert [a.content_id for a in plan.additions] == ["c2"] and plan.already_done == 1
+
+    def test_a_file_that_cannot_be_read_is_counted(self, env, tracks, files, tmp_path):
+        files(c1=tmp_path / "song.m4a")
+
+        plan = cw.plan_serato_cues(snap(env))
+
+        assert [a.content_id for a in plan.additions] == ["c2"]
+        assert dict(plan.serato_unchecked) == {".m4a files can't be checked yet": 1}
+
+    def test_after_copying_the_serato_sync_changes_nothing(self, env, tracks):
+        before = {name: path.read_bytes() for name, path in tracks.items()}
+        result = server.copy_serato_cues_to_rekordbox(dry_run=False, expected_cues=3)
+
+        library = db_library.tracks_from_snapshot(snap(env), first_beat=lambda _: None)
+        sync_plan = serato_sync.build_sync_plan(library.tracks)
+
+        assert "added 3 cue(s) to 2 track(s)" in result["summary"]
+        assert [i.status for i in sync_plan.items] == ["unchanged", "unchanged"]
+        assert {name: path.read_bytes() for name, path in tracks.items()} == before  # audio files are only read
+
+    def test_a_track_a_sync_would_change_is_left_out(self, env, files, tmp_path):
+        # the older tag holds other cues than the newer one, so a sync would rewrite it
+        files(c1=make_mp3(tmp_path / "odd.mp3", cued((0, 1000)), legacy=REAL_LEGACY),
+              c2=tmp_path / "gone.mp3", c4=tmp_path / "gone2.mp3")
+
+        plan = cw.plan_serato_cues(snap(env))
+
+        assert plan.additions == [] and plan.sync_would_differ == ["A"]
+
+    def test_uncertain_timing_is_skipped(self, env, files, tmp_path, monkeypatch):
+        monkeypatch.setattr(db_library, "read_first_beat_ms", lambda path: None)
+        files(c1=make_mp3(tmp_path / "x.mp3", cued((0, 1000)), audio=AUDIO_INFO_NO_LAME),
+              c2=tmp_path / "gone.mp3", c4=tmp_path / "gone2.mp3")
+
+        for asked in (False, True):  # with no estimate, asking for estimates doesn't bring it in
+            plan = cw.plan_serato_cues(snap(env), include_estimated_timing=asked)
+
+            assert plan.additions == [] and plan.timing_unsure == ["A"] and plan.timing_could_be_estimated == 0
+
+    def test_an_estimate_from_the_beat_grids_is_used_only_when_asked(self, env, files, tmp_path, monkeypatch):
+        # Serato's grid starts one MP3 frame (26 ms) after Rekordbox's
+        monkeypatch.setattr(db_library, "read_first_beat_ms", lambda path: 100)
+        files(c1=make_mp3(tmp_path / "x.mp3", cued((0, 1000)), audio=AUDIO_INFO_NO_LAME, beatgrid=(126.0, 128.0)),
+              c2=tmp_path / "gone.mp3", c4=tmp_path / "gone2.mp3")
+
+        skipped = cw.plan_serato_cues(snap(env))
+        included = cw.plan_serato_cues(snap(env), include_estimated_timing=True)
+
+        assert skipped.additions == [] and skipped.timing_could_be_estimated == 1
+        assert [a.cues for a in included.additions] == [((1, 974),)] and included.timing_estimated == 1
+        assert "ESTIMATED" in server.copy_serato_cues_to_rekordbox(include_estimated_timing=True)["summary"]
+
+    def test_the_tool_previews_by_default_and_reports_what_it_left_out(self, env, tracks):
+        result = server.copy_serato_cues_to_rekordbox()
+
+        assert result["dryRun"] is True and result["tracksToChange"] == 2 and result["cuesToAdd"] == 3
+        assert result["tracksWithNoSeratoCues"] == 1 and result["tracksSkippedForUncertainTiming"] == 0
+        assert [(e["trackId"], e["fileType"]) for e in result["examples"]] == [("c1", ".wav"), ("c2", ".mp3")]
+        assert "Nothing has been written" in result["summary"] and "Left out:" in result["summary"]
+        assert snap(env).cues == ()
+
+    def test_chosen_tracks_only_and_the_rest_later(self, env, tracks):
+        first = server.copy_serato_cues_to_rekordbox(track_ids=["c2"])
+        server.copy_serato_cues_to_rekordbox(track_ids=["c2"], dry_run=False, expected_cues=first["cuesToAdd"])
+
+        assert cues_of(env, "c2") == [(2, 2006)] and cues_of(env, "c1") == []
+        assert server.copy_serato_cues_to_rekordbox()["tracksToChange"] == 1
+
+    def test_undo_takes_the_copied_cues_off(self, env, tracks):
+        server.copy_serato_cues_to_rekordbox(dry_run=False, expected_cues=3)
+
+        server.undo_rekordbox_cue_additions(dry_run=False)
+
+        assert snap(env).cues == ()
+
+    def test_a_serato_cue_moved_after_the_dry_run_stops_the_write(self, env, tracks):
+        plan = cw.plan_serato_cues(snap(env))
+        make_wav(tracks["c1"], cued((0, 1500)))
+
+        with pytest.raises(rd.DatabaseError, match="changed since"):
+            cw.apply_cue_plan(plan, env["db"], env["backend"], cw.plan_serato_cues)
+
+        assert snap(env).cues == ()
+
+
+class TestLimitingToChosenTracks:
+    def test_the_default_cue_goes_only_to_them(self, env):
+        result = server.set_default_cue(track_ids=["c2"])
+        server.set_default_cue(track_ids=["c2"], dry_run=False, expected_cues=result["cuesToAdd"])
+
+        assert result["tracksToChange"] == 1 and result["limitedToTrackIds"] == ["c2"]
+        assert cues_of(env, "c2") == [(1, 0)] and cues_of(env, "c4") == []
+
+    def test_an_empty_list_means_no_tracks_never_all_of_them(self, env):
+        assert server.set_default_cue(track_ids=[])["tracksToChange"] == 0
+        assert cw.plan_serato_cues(snap(env), track_ids=[]).additions == []
+
+    def test_an_unknown_id_is_an_error(self, env):
+        with pytest.raises(ToolError, match="aren't in Rekordbox's database: nope"):
+            server.set_default_cue(track_ids=["c2", "nope"])
+
+    def test_a_chosen_track_still_has_to_be_in_a_playlist(self, env):
+        plan = cw.plan_default_cues(snap(env), track_ids=["c3"])
+
+        assert plan.additions == [] and plan.not_playlisted == 1
 
 
 class TestMemoryToHotPlan:

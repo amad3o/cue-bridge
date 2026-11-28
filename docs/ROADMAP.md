@@ -22,7 +22,7 @@ The loop that was the goal now works end to end with no manual export:
 
 ## Completed
 
-**MCP server** (`src/cuebridge/mcp_server.py` is the entry point; the tools are in `src/cuebridge/tools/`; stdio, `mcp` 2.x; registered in Claude Code). 28 tools, all returning compact, paginated output. The tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
+**MCP server** (`src/cuebridge/mcp_server.py` is the entry point; the tools are in `src/cuebridge/tools/`; stdio, `mcp` 2.x; registered in Claude Code). 29 tools, all returning compact, paginated output. The tools that write are annotated as destructive, and the server's instructions tell the assistant to show a dry run and get the user's go-ahead first.
 
 | Area                 | Tools                                                                                                                                                                                                                                  |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -51,7 +51,7 @@ The loop that was the goal now works end to end with no manual export:
 ## Known issues
 
 - **Fixed 2026-11-28: Serato-only cues were invisible and at risk.** `check_sync_status` only read tracks with Rekordbox cues, so it said "in sync" while 194 tracks had cues only in Serato. `set_default_cue` only looked at Rekordbox, so applying it and then syncing would have replaced those cues with one cue at 0:00 (found in the code; it wasn't run). Now the default cue needs the file confirmed free of Serato cues, the sync check reports Serato-only cues, and the sync dry run counts the cues it would remove or move. Checked with dry runs on the real library: 1,282 tracks would get the default, 194 are protected, 21 (M4A and AIFF) can't be checked.
-- **Still open:** adding a Rekordbox cue by hand (or by any other route) to a Serato-only track still lets a sync replace its Serato cues; the dry run's warning is the safeguard, and nothing blocks the write. Copying Serato cues into Rekordbox isn't built.
+- **Still open:** adding a Rekordbox cue by hand (or by any other route) to a Serato-only track still lets a sync replace its Serato cues; the dry run's warning is the safeguard, and nothing blocks the write. Serato cues can now be copied into tracks with no Rekordbox cue (section 9).
 
 1. ~~Housekeeping.~~ Done 2026-11-18: `.python-version` (3.13), `requires-python >=3.10` and ruff config in `pyproject.toml`, a `Makefile` (`make setup`, `make check`), and GitHub Actions CI (ruff and pytest on Python 3.10 to 3.14). The tests pass on all five versions locally. CI has run on GitHub and passes (checked 2026-11-28); it installs without the beatgrid extra, so the tests that need that extra are skipped there.
 2. ~~The two Rekordbox XML edit tools re-serialised the XML.~~ Gone: both now write to the database (2026-11-18, section 9), and the XML cue-editing code and its tests were deleted. `rekordbox/editor.py` keeps only the safe-write layer the playlist export uses.
@@ -128,7 +128,7 @@ Reorganized 2026-11-22: the project root is flat (`src/`, `tests/`, `docs/`, `py
 ### 5. Convert and export
 
 - [x] Rekordbox to Serato: write cues into Serato tags in audio files.
-- [ ] Serato to Rekordbox: generate cues for Rekordbox from Serato's tags.
+- [~] **Serato to Rekordbox** (`copy_serato_cues_to_rekordbox`, 2026-11-28): Serato's hot cues, in the same slots, into tracks with no Rekordbox cue or loop, with the timing correction reversed. A track is left out if its timing isn't measured (a beat-grid estimate only on request) or if the Serato sync would then change its file. Uses the cue writer's backup, journal, verification and undo; `track_ids` (also on `set_default_cue`) allows a small first run. Applied to the real database on 2026-11-28 (194 cues on 154 tracks: one track first, then the rest): the database check passed, 200 tracks now match in both apps and a sync dry run would change no file. 40 tracks with uncertain timing remain (20 have a beat-grid estimate). **Not yet confirmed in Rekordbox itself** that the cues sit in the right places. Not built: merging into tracks that have cues; copying colors, names or loops.
 - [x] **Safety before any write**, now a pattern used by the Serato sync and the database sync: `dry_run=True` by default with a text preview; applying requires an expected count equal to the dry run's; a write-ahead journal; read-back verification; an immediate restore on failure; undo; a refusal while the program is running. An assistant can still call a tool with `dry_run=false` itself, so the real check is the MCP client's per-call approval (the tools are marked destructive).
 - [ ] Apply the same pattern to future file-writing actions (tag fixes, section 8).
 

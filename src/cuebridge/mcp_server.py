@@ -13,6 +13,7 @@ import os
 from cuebridge.tools.beatgrid import analyze_beatgrid
 from cuebridge.tools.common import mcp, reset_state
 from cuebridge.tools.cues import (
+    copy_serato_cues_to_rekordbox,
     duplicate_memory_cues_to_hot_cues,
     set_default_cue,
     undo_rekordbox_cue_additions,
@@ -74,6 +75,7 @@ __all__ = [
     "clean_up_stale_duplicates",
     "compare_cues",
     "compare_libraries",
+    "copy_serato_cues_to_rekordbox",
     "create_review_playlists",
     "duplicate_memory_cues_to_hot_cues",
     "export_playlists_for_rekordbox",

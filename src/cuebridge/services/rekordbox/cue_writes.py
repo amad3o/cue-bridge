@@ -1,9 +1,10 @@
 """Add hot cues to tracks in Rekordbox's database (the replacement for the XML cue editors).
 
-Two plans, one apply and one undo:
+Three plans, one apply and one undo:
   * `plan_default_cues`: a hot cue A at 0:00 for every playlisted track with no cue at all.
   * `plan_memory_to_hot_cues`: a hot cue duplicate for each memory cue that has none, in the
     lowest free slot (same rules as `cue_rules.plan_memory_to_hot`).
+  * `plan_serato_cues`: Serato's hot cues, in the same slots, for tracks with no Rekordbox cue or loop.
 
 Only playlisted tracks are touched by default: the collection holds thousands of sample-pack
 files nobody plays from a playlist (and Pioneer's one-shots would each get a cue too).
@@ -24,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from cuebridge.services.cues import cue_rules
+from cuebridge.services.cues.cue_timing import refine_with_beat_grids, timing_offset, to_rekordbox_ms
 from cuebridge.services.rekordbox import db_library
 from cuebridge.services.rekordbox.db import (
     JOURNAL_VERSION,
@@ -41,6 +43,8 @@ from cuebridge.services.rekordbox.db import (
     cuebridge_home,
     read_snapshot,
 )
+from cuebridge.services.rekordbox.service import LibraryError
+from cuebridge.services.serato import sync as serato_sync
 from cuebridge.services.serato import tags as serato_tags
 
 CUE_JOURNALS = "rekordbox-cues"
@@ -67,6 +71,14 @@ class CuePlan:
     has_serato_cues: list[str] = field(default_factory=list)  # titles left out to protect their Serato cues
     serato_unchecked: Counter = field(default_factory=Counter)  # reason -> tracks left out because it can't be ruled out
 
+    # only for copying Serato's cues
+    no_serato_cues: int = 0
+    timing_unsure: list[str] = field(default_factory=list)  # titles left out: no correction, or only an estimate not asked for
+    timing_could_be_estimated: int = 0  # how many of those include_estimated_timing would bring in
+    timing_estimated: int = 0  # tracks in the plan whose timing is an estimate from the beat grids
+    sync_would_differ: list[str] = field(default_factory=list)  # titles left out: a sync back would change the file
+    unsupported_slot: list[str] = field(default_factory=list)  # titles with a Serato cue in a slot Rekordbox can't hold
+
     @property
     def cue_count(self) -> int:
         return sum(len(a.cues) for a in self.additions)
@@ -77,21 +89,35 @@ def _playlisted_ids(snapshot: DbSnapshot) -> set[str]:
     return {c for p in snapshot.playlists if p.is_plain for c in p.content_ids}
 
 
-def _scope(snapshot: DbSnapshot, playlisted_only: bool) -> tuple[list, int]:
-    """The tracks to consider, and how many were left out for being in no playlist."""
+def _scope(snapshot: DbSnapshot, playlisted_only: bool, track_ids: list[str] | None = None) -> tuple[list, int]:
+    """The tracks to consider, and how many were left out for being in no playlist.
+
+    `track_ids` limits them to those tracks. An empty list means no tracks, never all of them.
+    """
+    contents = list(snapshot.contents)
+
+    if track_ids is not None:
+        wanted = {str(i) for i in track_ids}
+        unknown = wanted - {c.id for c in contents}
+
+        if unknown:
+            raise DatabaseError("These track IDs aren't in Rekordbox's database: " + ", ".join(sorted(unknown)[:10]))
+
+        contents = [c for c in contents if c.id in wanted]
+
     if not playlisted_only:
-        return list(snapshot.contents), 0
+        return contents, 0
 
     playlisted = _playlisted_ids(snapshot)
-    chosen = [c for c in snapshot.contents if c.id in playlisted]
+    chosen = [c for c in contents if c.id in playlisted]
 
-    return chosen, len(snapshot.contents) - len(chosen)
+    return chosen, len(contents) - len(chosen)
 
 
-def plan_default_cues(snapshot: DbSnapshot, playlisted_only: bool = True) -> CuePlan:
+def plan_default_cues(snapshot: DbSnapshot, playlisted_only: bool = True, track_ids: list[str] | None = None) -> CuePlan:
     """A hot cue A at 0:00 for each track that has no cue or loop at all, in Rekordbox or (checked) in Serato."""
     plan = CuePlan("default cue")
-    contents, plan.not_playlisted = _scope(snapshot, playlisted_only)
+    contents, plan.not_playlisted = _scope(snapshot, playlisted_only, track_ids)
     with_cues = {c.content_id for c in snapshot.cues}
 
     for content in contents:
@@ -107,6 +133,83 @@ def plan_default_cues(snapshot: DbSnapshot, playlisted_only: bool = True) -> Cue
             plan.serato_unchecked[doubt] += 1
         else:
             plan.additions.append(CueAddition(content.id, content.title, content.artist, ((SLOT_KINDS[0], 0),)))
+
+    return plan
+
+
+def _sync_would_change_nothing(content, cues: tuple[tuple[int, int], ...], first_beat_ms: int | None) -> bool:
+    """Once the track has these cues in Rekordbox, would the Serato sync leave its file exactly as it is?
+
+    Asks the sync's own planner, reading the cues the way it will read them from the database.
+    """
+    added = DbSnapshot((content,), (), tuple(DbCue(content.id, kind, ms) for kind, ms in cues))
+    track = db_library.tracks_from_snapshot(added, first_beat=lambda _: first_beat_ms).tracks[0]
+    items = serato_sync.build_sync_plan([track]).items
+
+    return len(items) == 1 and items[0].status == "unchanged"
+
+
+def plan_serato_cues(
+    snapshot: DbSnapshot,
+    playlisted_only: bool = True,
+    track_ids: list[str] | None = None,
+    include_estimated_timing: bool = False,
+) -> CuePlan:
+    """Serato's hot cues, in the same slots, for each track that has no Rekordbox cue or loop.
+
+    It only ever fills an empty track, so there is nothing to merge. Left out: a track whose timing correction isn't
+    measured (an estimate from the beat grids is used only if asked for, and no correction at all never is), and one
+    whose file a sync back to Serato would then change. Reads the audio files; never writes them. Colours aren't
+    copied: Rekordbox's default doesn't override Serato's in a sync, so Serato keeps its own.
+    """
+    plan = CuePlan("Serato cues")
+    contents, plan.not_playlisted = _scope(snapshot, playlisted_only, track_ids)
+    with_cues = {c.content_id for c in snapshot.cues}
+
+    for content in contents:
+        title = content.title or content.id
+
+        if content.id in with_cues:
+            plan.already_done += 1
+            continue
+
+        doubt = serato_tags.why_it_may_have_cues(content.path)
+
+        if doubt is None:
+            plan.no_serato_cues += 1
+            continue
+
+        if doubt != serato_tags.HAS_CUES:
+            plan.serato_unchecked[doubt] += 1
+            continue
+
+        try:
+            found = sorted(serato_tags.read_cues(content.path), key=lambda c: c.index)
+            beat = db_library.read_first_beat_ms(content.analysis_path)
+            offset = refine_with_beat_grids(timing_offset(content.path), content.path, beat)
+        except (OSError, LibraryError):
+            plan.serato_unchecked["its tags couldn't be read"] += 1
+            continue
+
+        if any(c.index not in SLOT_KINDS for c in found):
+            plan.unsupported_slot.append(title)
+            continue
+
+        estimated = offset.confidence == "estimated"
+
+        if offset.flagged and not (estimated and include_estimated_timing):
+            plan.timing_unsure.append(title)
+            plan.timing_could_be_estimated += estimated
+            continue
+
+        cues = tuple((SLOT_KINDS[c.index], to_rekordbox_ms(c.position_ms, offset)) for c in found)
+
+        if not _sync_would_change_nothing(content, cues, beat):
+            plan.sync_would_differ.append(title)
+            continue
+
+        plan.timing_estimated += estimated
+        plan.additions.append(CueAddition(content.id, content.title, content.artist, cues))
 
     return plan
 

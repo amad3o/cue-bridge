@@ -74,6 +74,7 @@ class TestRegistration:
             "audit_music_library",
             "analyze_beatgrid",
             "set_default_cue",
+            "copy_serato_cues_to_rekordbox",
             "duplicate_memory_cues_to_hot_cues",
             "sync_cues_to_serato",
             "undo_serato_sync",
@@ -82,7 +83,12 @@ class TestRegistration:
     def test_only_the_writing_tools_are_marked_as_writing(self):
         tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
 
-        for name in ("set_default_cue", "duplicate_memory_cues_to_hot_cues", "undo_rekordbox_cue_additions", "sync_cues_to_serato", "undo_serato_sync"):
+        writers = (
+            "set_default_cue", "copy_serato_cues_to_rekordbox", "duplicate_memory_cues_to_hot_cues",
+            "undo_rekordbox_cue_additions", "sync_cues_to_serato", "undo_serato_sync",
+        )
+
+        for name in writers:
             assert tools[name].annotations.read_only_hint is False
             # They change real files or Rekordbox's database, so clients should confirm.
             assert tools[name].annotations.destructive_hint is True

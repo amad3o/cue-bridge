@@ -174,7 +174,7 @@ def _cues_section(inputs: Inputs, attention: list[dict]) -> dict:
         }
         _attention(
             attention, "cues", "tracks with cues in Serato but none in Rekordbox", len(only.with_cues),
-            "no tool copies these into Rekordbox yet; compare_cues(show='serato_only') lists them. Don't add a "
+            "copy_serato_cues_to_rekordbox (compare_cues(show='serato_only') lists them). Don't add some other "
             "Rekordbox cue to one and then sync: that replaces its Serato cues",
         )
 

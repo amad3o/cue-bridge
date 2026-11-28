@@ -6,7 +6,7 @@ Your files stay on your machine, but whatever the assistant is shown (track name
 
 ## What it does
 
-Early development, used on one real library. There are 28 tools; results are paged (at most 100 per call).
+Early development, used on one real library. There are 29 tools; results are paged (at most 100 per call).
 
 | Area | Tools |
 | --- | --- |
@@ -14,13 +14,13 @@ Early development, used on one real library. There are 28 tools; results are pag
 | Read and search | `load_apple_music_library` (live from the Music app, or an XML), `get_playlist_tracks`, `load_rekordbox_library`, `search_tracks`, `get_track_cues`, `find_tracks_without_cues` (the last three read the XML export) |
 | Compare and audit | `compare_libraries`, `list_library_differences`, `find_missing_files`, `compare_cues`, `audit_music_library` |
 | Cues to Serato | `sync_cues_to_serato` writes Rekordbox's cues into MP3 and WAV tags; Rekordbox wins |
-| Cues in Rekordbox | `set_default_cue` (hot cue A at 0:00 on tracks with no cue in Rekordbox, once their files are confirmed to have no Serato cues), `duplicate_memory_cues_to_hot_cues` |
+| Cues in Rekordbox | `copy_serato_cues_to_rekordbox` (Serato's hot cues, only into tracks with none in Rekordbox), `set_default_cue` (hot cue A at 0:00 on tracks with no cue in Rekordbox, once their files are confirmed to have no Serato cues), `duplicate_memory_cues_to_hot_cues` |
 | Playlists | `sync_playlists_to_rekordbox` (updates existing playlists), `export_playlists_for_rekordbox` (XML import, for new tracks and playlists) |
 | Repairs | `fix_moved_files_in_rekordbox`, `report_stale_duplicates`, `create_review_playlists`, `clean_up_stale_duplicates` |
 | Undo | six `undo_*` tools, one for each writer above except the XML export |
 | Experimental | `analyze_beatgrid`: read-only BPM and first-beat estimate, not accurate enough yet to write grids from |
 
-Not built: Serato to Rekordbox cues, M4A, AIFF and FLAC cues (skipped), tag editing and Serato crates. The [roadmap](docs/ROADMAP.md) has what's done, what's unverified in the real apps and what's next.
+Not built: merging Serato cues into tracks that already have Rekordbox cues, copying cue colors, names or loops from Serato, M4A, AIFF and FLAC cues (skipped), tag editing and Serato crates. The [roadmap](docs/ROADMAP.md) has what's done, what's unverified in the real apps and what's next.
 
 ## Setup
 
@@ -70,7 +70,7 @@ The tools that change something follow one pattern:
 - **The XML export** only edits the XML file you import into Rekordbox. It has no undo tool.
 - **Approval.** The built-in agent refuses a real change unless the same call's dry run happened before your latest message. It then asks Yes or No, starting on No, and shows what that dry run said. This is enforced in Python (`agent/runner.py`, `agent/previews.py`); neither the model nor the screen can skip it. In other clients, you rely on that client's permission prompts.
 
-Rekordbox opening a database with cues added by the two cue tools hasn't been checked in the app yet.
+Cues added to Rekordbox's database by the three cue tools haven't been confirmed in the app yet: that it opens the database properly and that the cues sit where they should.
 
 ## How it works
 
