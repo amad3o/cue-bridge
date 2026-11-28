@@ -27,4 +27,5 @@ Rules:
   After a change, name the undo tool and the journal it reports.
 - Tools return pages of results: use limit and offset for more rather than guessing.
 - analyze_beatgrid gives unverified estimates: never present them as correct.
+- When a summary says CHECK BY HAND, tell the user that, with the tracks to check, even in a short reply.
 """

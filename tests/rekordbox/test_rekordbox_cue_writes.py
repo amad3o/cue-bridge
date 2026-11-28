@@ -248,8 +248,41 @@ class TestCopyingSeratoCues:
         included = cw.plan_serato_cues(snap(env), include_estimated_timing=True)
 
         assert skipped.additions == [] and skipped.timing_could_be_estimated == 1
-        assert [a.cues for a in included.additions] == [((1, 974),)] and included.timing_estimated == 1
-        assert "ESTIMATED" in server.copy_serato_cues_to_rekordbox(include_estimated_timing=True)["summary"]
+        assert [a.cues for a in included.additions] == [((1, 974),)] and included.timing_estimated == included.additions
+
+    @pytest.mark.parametrize("apply", [False, True])
+    def test_estimated_timing_leads_the_summary_with_what_to_check(self, env, files, tmp_path, monkeypatch, apply):
+        monkeypatch.setattr(db_library, "read_first_beat_ms", lambda path: 100)
+        files(c1=make_mp3(tmp_path / "x.mp3", cued((0, 1000)), audio=AUDIO_INFO_NO_LAME, beatgrid=(126.0, 128.0)),
+              c2=make_wav(tmp_path / "sure.wav", cued((0, 500))), c4=tmp_path / "gone.mp3")
+
+        result = server.copy_serato_cues_to_rekordbox(
+            include_estimated_timing=True, dry_run=not apply, expected_cues=2 if apply else None
+        )
+
+        assert result["summary"].startswith("CHECK BY HAND: 1 track(s) use timing ESTIMATED")
+        assert "before relying on them" in result["summary"] and "up to 30 ms" in result["summary"]
+        assert result["estimatedTimingTracksToCheck"] == [
+            {"trackId": "c1", "track": "A", "artist": "X", "cues": ["A 0:00.974"]}
+        ]  # not the WAV, whose timing is measured
+
+    def test_a_long_list_to_check_says_it_is_cut(self, env, files, tmp_path, monkeypatch):
+        from cuebridge.tools import cues as cue_tools
+
+        monkeypatch.setattr(cue_tools, "MAX_TRACKS_TO_CHECK", 1)
+        monkeypatch.setattr(db_library, "read_first_beat_ms", lambda path: 100)
+        track = make_mp3(tmp_path / "x.mp3", cued((0, 1000)), audio=AUDIO_INFO_NO_LAME, beatgrid=(126.0, 128.0))
+        files(c1=track, c2=track, c4=tmp_path / "gone.mp3")
+
+        result = server.copy_serato_cues_to_rekordbox(include_estimated_timing=True)
+
+        assert result["tracksUsingEstimatedTiming"] == 2 and len(result["estimatedTimingTracksToCheck"]) == 1
+        assert "lists the first 1." in result["summary"]
+
+    def test_measured_timing_has_no_warning(self, env, tracks):
+        result = server.copy_serato_cues_to_rekordbox()
+
+        assert "CHECK BY HAND" not in result["summary"] and result["estimatedTimingTracksToCheck"] == []
 
     def test_the_tool_previews_by_default_and_reports_what_it_left_out(self, env, tracks):
         result = server.copy_serato_cues_to_rekordbox()

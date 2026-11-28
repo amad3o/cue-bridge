@@ -75,7 +75,7 @@ class CuePlan:
     no_serato_cues: int = 0
     timing_unsure: list[str] = field(default_factory=list)  # titles left out: no correction, or only an estimate not asked for
     timing_could_be_estimated: int = 0  # how many of those include_estimated_timing would bring in
-    timing_estimated: int = 0  # tracks in the plan whose timing is an estimate from the beat grids
+    timing_estimated: list[CueAddition] = field(default_factory=list)  # those in `additions` whose timing is a beat-grid estimate
     sync_would_differ: list[str] = field(default_factory=list)  # titles left out: a sync back would change the file
     unsupported_slot: list[str] = field(default_factory=list)  # titles with a Serato cue in a slot Rekordbox can't hold
 
@@ -208,8 +208,11 @@ def plan_serato_cues(
             plan.sync_would_differ.append(title)
             continue
 
-        plan.timing_estimated += estimated
-        plan.additions.append(CueAddition(content.id, content.title, content.artist, cues))
+        addition = CueAddition(content.id, content.title, content.artist, cues)
+        plan.additions.append(addition)
+
+        if estimated:
+            plan.timing_estimated.append(addition)
 
     return plan
 

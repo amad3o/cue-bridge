@@ -9,11 +9,15 @@ from mcp.types import ToolAnnotations
 from cuebridge.services.rekordbox import cue_writes as rekordbox_cue_writes
 from cuebridge.services.rekordbox import db as rekordbox_db
 from cuebridge.services.rekordbox import db_library
+from cuebridge.services.reports.library_queries import format_time
+from cuebridge.services.serato.sync import UNVERIFIED_TOLERANCE_MS
 from cuebridge.tools.common import (
     db_target,
     mcp,
     translate_errors,
 )
+
+MAX_TRACKS_TO_CHECK = 30
 
 
 def _left_out(plan, result: dict) -> str:
@@ -47,7 +51,14 @@ def _left_out(plan, result: dict) -> str:
         "tracksSkippedBecauseASyncBackWouldChangeTheFile": len(plan.sync_would_differ),
         "examplesASyncBackWouldChange": plan.sync_would_differ[:10],
         "tracksSkippedForASlotRekordboxCannotHold": len(plan.unsupported_slot),
-        "tracksUsingEstimatedTiming": plan.timing_estimated,
+        "tracksUsingEstimatedTiming": len(plan.timing_estimated),
+        "estimatedTimingTracksToCheck": [
+            {
+                "trackId": a.content_id, "track": a.title, "artist": a.artist,
+                "cues": [f"{'ABCDEFGH'[db_library.HOT_CUE_SLOTS[k]]} {format_time(ms)}" for k, ms in a.cues],
+            }
+            for a in plan.timing_estimated[:MAX_TRACKS_TO_CHECK]
+        ],
     })
     parts = [
         f"{len(plan.timing_unsure)} with uncertain timing"
@@ -61,10 +72,27 @@ def _left_out(plan, result: dict) -> str:
 
     note = " Left out: " + ", ".join(parts) + "."
 
-    if plan.timing_estimated:
-        note += f" {plan.timing_estimated} of the tracks to copy use timing ESTIMATED from beat grids."
-
     return note
+
+
+def _check_warning(plan) -> str:
+    """What the user has to be told about cues placed by an estimate, to go at the very start of the summary."""
+    count = len(plan.timing_estimated)
+
+    if not count:
+        return ""
+
+    listed = (
+        "estimatedTimingTracksToCheck lists them."
+        if count <= MAX_TRACKS_TO_CHECK
+        else f"estimatedTimingTracksToCheck lists the first {MAX_TRACKS_TO_CHECK}."
+    )
+
+    return (
+        f"CHECK BY HAND: {count} track(s) use timing ESTIMATED from beat grids. Compare their cues in Rekordbox with "
+        f"Serato before relying on them or exporting to USB; {listed} A Serato sync that shows no changes does not prove "
+        f"them right, because for these files it ignores differences up to {UNVERIFIED_TOLERANCE_MS} ms. "
+    )
 
 
 def _cue_write_tool(
@@ -107,6 +135,7 @@ def _cue_write_tool(
     }
 
     left_out = _left_out(plan, result)
+    warning = _check_warning(plan)
 
     if not plan.additions:
         result["summary"] = "Nothing to do: no cues need adding, and nothing was written." + left_out
@@ -114,7 +143,7 @@ def _cue_write_tool(
 
     if dry_run:
         result["summary"] = (
-            f"Would {what}: {plan.cue_count} cue(s) on {len(plan.additions)} track(s), written to Rekordbox's database. "
+            f"{warning}Would {what}: {plan.cue_count} cue(s) on {len(plan.additions)} track(s), written to Rekordbox's database. "
             "Nothing has been written." + left_out + (" Quit Rekordbox before applying." if running else "")
         )
         return result
@@ -129,7 +158,7 @@ def _cue_write_tool(
     result["backup"] = str(outcome.backup)
     result["journal"] = str(outcome.journal)
     result["summary"] = (
-        f"Did {what}: added {plan.cue_count} cue(s) to {len(plan.additions)} track(s) and verified the database. "
+        f"{warning}Did {what}: added {plan.cue_count} cue(s) to {len(plan.additions)} track(s) and verified the database. "
         f"Backup: {outcome.backup}. To reverse this, call undo_rekordbox_cue_additions (journal: {outcome.journal}). "
         "You can open Rekordbox now." + left_out
     )
@@ -209,8 +238,12 @@ def copy_serato_cues_to_rekordbox(
     A track is left out, and counted, if its timing correction isn't measured,
     or if a sync back to Serato would then change its file. For some of the
     uncertain ones the beat grids give an estimate: include_estimated_timing=true
-    copies those too, and the user must check them by ear. That check proves the
-    two directions agree, not that a cue is in the right place in Rekordbox.
+    copies those too. The sync-back check proves the two directions agree, not
+    that a cue is in the right place in Rekordbox, and for estimated files it
+    can't see an error of up to 30 ms. So whenever estimated timing is used, tell
+    the user, both after the dry run and after applying, that they must check
+    those cues in Rekordbox against Serato, and name the tracks from
+    estimatedTimingTracksToCheck.
 
     This edits master.db, with the same steps as set_default_cue: dry run first
     (Rekordbox may be open), then Rekordbox closed and dry_run=false with
