@@ -1,5 +1,5 @@
 import { Box, Text } from "ink";
-import { argumentSummary, short, took } from "../lib/format";
+import { argumentSummary, short, took, usageSummary } from "../lib/format";
 import { renderMarkdown } from "../lib/markdown";
 import { Dots } from "./Spinner";
 import type { Approval, Entry } from "../lib/state";
@@ -58,6 +58,12 @@ export function EntryView({ entry, width }: { entry: Entry; width: number }) {
       );
     case "note":
       return <Text dimColor>{entry.text}</Text>;
+    case "usage":
+      return (
+        <Box marginLeft={2} marginTop={1}>
+          <Text dimColor>{usageSummary(entry.turn, entry.session, entry.lastInput)}</Text>
+        </Box>
+      );
   }
 }
 

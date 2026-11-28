@@ -1,6 +1,6 @@
 // What the screen shows, as a pure function of the agent's events (so it can be tested without a terminal).
 
-import type { AgentEvent, Args } from "../agent/protocol";
+import type { AgentEvent, Args, TokenCount } from "../agent/protocol";
 
 export type Entry =
   | { kind: "banner"; tools: number; gated: number }
@@ -8,7 +8,8 @@ export type Entry =
   | { kind: "tool"; id: string; name: string; arguments: Args; state: "running" | "done" | "failed"; seconds: number | null; failure: string | null }
   | { kind: "reply"; text: string }
   | { kind: "error"; message: string }
-  | { kind: "note"; text: string };
+  | { kind: "note"; text: string }
+  | { kind: "usage"; turn: TokenCount; session: TokenCount; lastInput: number };
 
 export type Approval = { id: string; name: string; arguments: Args; preview: string[] };
 
@@ -73,5 +74,7 @@ function applyEvent(state: State, event: AgentEvent): State {
       return { ...state, entries: [...state.entries, { kind: "reply", text: event.text }] };
     case "error":
       return { ...state, thinking: false, entries: [...state.entries, { kind: "error", message: event.message }] };
+    case "usage":
+      return { ...state, entries: [...state.entries, { kind: "usage", turn: event.turn, session: event.session, lastInput: event.last_input }] };
   }
 }

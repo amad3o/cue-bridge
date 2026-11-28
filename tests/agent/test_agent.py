@@ -30,13 +30,14 @@ def say(text):
 class ScriptedModel(Model):
     """Replies with the next scripted list of output items each time it is called, and keeps what it was sent."""
 
-    def __init__(self, *replies):
+    def __init__(self, *replies, usage=None):
         self.replies = list(replies)
         self.inputs = []
+        self.usage = usage or Usage()
 
     async def get_response(self, system_instructions, input, model_settings, tools, output_schema, handoffs, tracing, **kwargs):
         self.inputs.append(input)
-        return ModelResponse(output=self.replies.pop(0), usage=Usage(), response_id=None)
+        return ModelResponse(output=self.replies.pop(0), usage=self.usage, response_id=None)
 
     def stream_response(self, *args, **kwargs):
         raise NotImplementedError
@@ -235,6 +236,48 @@ class TestWithTheScreenAttached:
 
         asyncio.run(go())
         assert world.writes == []
+
+
+class TestAnsweringOneMessage:
+    """The whole path for one message, with the SDK counting: what the screen is told and what is kept as history."""
+
+    def answer(self, world, history, *replies, answers=()):
+        model = ScriptedModel(*replies, usage=Usage(requests=1, input_tokens=100, output_tokens=7, total_tokens=107))
+        agent = Agent(name="test", model=model, tools=world.tools)
+        sent = []
+
+        async def go():
+            ui = JsonUI(sent.append)
+
+            for approve in answers:
+                ui.incoming.put_nowait({"type": "approval_response", "id": "approval-1", "approve": approve})
+
+            return await agent_module.answer(agent, history, "go", ui)
+
+        return asyncio.run(go()), [json.loads(line) for line in sent]
+
+    def test_the_reply_is_followed_by_the_tokens_of_every_model_call(self, world):
+        conversation, events = self.answer(world, [], [call("look_at_thing", {}, "c1")], [say("done")])
+
+        assert [e["type"] for e in events][-2:] == ["reply", "usage"]
+        assert events[-1]["turn"] == {"calls": 2, "input": 200, "cached": 0, "output": 14}
+        assert events[-1]["last_input"] == 100
+        assert conversation[0] == {"role": "user", "content": "go"}
+
+    def test_calls_after_an_approval_are_counted_too(self, world):
+        _, events = self.answer(world, previewed({}), [call("sync_thing", {"dry_run": False}, "c1")], [say("done")], answers=[True])
+
+        assert world.writes == [False]
+        assert events[-1]["turn"]["calls"] == 2
+
+    def test_a_failed_turn_still_reports_what_it_used_and_keeps_the_old_history(self, world):
+        history = [{"role": "user", "content": "earlier"}]
+        # no second scripted reply, so the second model call fails
+        conversation, events = self.answer(world, history, [call("look_at_thing", {}, "c1")])
+
+        assert [e["type"] for e in events][-2:] == ["error", "usage"]
+        assert events[-1]["turn"] == {"calls": 1, "input": 100, "cached": 0, "output": 7}
+        assert conversation == history
 
 
 class TestIsRealChange:

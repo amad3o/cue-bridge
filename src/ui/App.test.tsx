@@ -43,6 +43,18 @@ describe("App", () => {
     expect(lastFrame()).not.toContain("**");
   });
 
+  it("shows the tokens used under the reply", async () => {
+    const agent = fakeAgent();
+    const { lastFrame } = render(<App connect={agent.connect} />);
+    agent.emit(ready);
+    const count = { calls: 2, input: 1500, cached: 0, output: 40 };
+    agent.emit({ type: "reply", text: "done" });
+    agent.emit({ type: "usage", turn: count, session: count, last_input: 900 });
+    await tick();
+
+    expect(lastFrame()).toContain("Tokens: 1.5k in, 40 out, 2 model calls");
+  });
+
   it("shows the approval panel with every argument, unformatted", async () => {
     const agent = fakeAgent();
     const { lastFrame } = render(<App connect={agent.connect} />);

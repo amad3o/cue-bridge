@@ -96,14 +96,14 @@ There are three processes:
 5. The server runs it: a thin function in `tools/` calls the logic in `services/`. The result goes back to the model.
 6. The model calls another tool or answers (at most 40 model turns per run). The reply arrives all at once, with no streaming.
 
-The screen turns events into state (`lib/state.ts`) and draws it: a spinner, a line per tool with its arguments, time and ✓ or ✗, the approval panel, and the reply as Markdown.
+The screen turns events into state (`lib/state.ts`) and draws it: a spinner, a line per tool with its arguments, time and ✓ or ✗, the approval panel, the reply as Markdown, and the tokens it used.
 
 ### Current limitations of the agent
 
 - Apart from the dry-run result in the approval panel, the screen never receives tool results, so what you read in a reply is the model's retelling.
 - That panel shows what the dry run said at the time, shortened. The tools' own expected counts are what catch a library that changed since.
 - If a turn fails, it's left out of the history, so the model forgets any write made in it (and any dry run, which then has to be repeated).
-- History is never trimmed or saved. SDK tracing is off.
+- History is never trimmed or saved; the token line under each reply shows how it grows. SDK tracing is off.
 
 ### Where to look
 

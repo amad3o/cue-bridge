@@ -6,6 +6,10 @@ describe("parseEvent", () => {
     expect(parseEvent('{"type":"reply","text":"hi"}')).toEqual({ type: "reply", text: "hi" });
   });
 
+  it("reads a usage event", () => {
+    expect(parseEvent('{"type":"usage","last_input":5}')).toEqual({ type: "usage", last_input: 5 });
+  });
+
   it.each(["", "nope", "[1]", "5", "null", "{}", '{"type":5}', '{"type":"mystery"}'])("ignores %j", (line) => {
     expect(parseEvent(line)).toBeNull();
   });

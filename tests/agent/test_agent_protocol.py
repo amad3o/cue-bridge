@@ -6,8 +6,10 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from agents import Usage
+from openai.types.responses.response_usage import InputTokensDetails
 
-from cuebridge.agent.protocol import JsonUI, ToolLines, failure_reason, parse_arguments, parse_message, short
+from cuebridge.agent.protocol import JsonUI, ScreenHooks, failure_reason, parse_arguments, parse_message, short
 
 
 class TestParseArguments:
@@ -122,7 +124,7 @@ class TestToolLines:
 
     def test_a_finish_without_a_start_still_reports(self, sent):
         async def go():
-            await ToolLines(JsonUI(sent.append)).on_tool_end(SimpleNamespace(tool_call_id="c9"), None, self.tool(), "ok")
+            await ScreenHooks(JsonUI(sent.append)).on_tool_end(SimpleNamespace(tool_call_id="c9"), None, self.tool(), "ok")
 
         asyncio.run(go())
         assert events(sent)[0]["seconds"] is None
@@ -134,6 +136,43 @@ class TestToolLines:
 
         asyncio.run(go())
         assert events(sent)[0]["failure"] == "no file"
+
+
+def usage(input=0, output=0, cached=0):
+    return Usage(requests=1, input_tokens=input, output_tokens=output, total_tokens=input + output,
+                 input_tokens_details=InputTokensDetails(cached_tokens=cached, cache_write_tokens=0))
+
+
+class TestUsage:
+    def test_the_turn_resets_and_the_session_adds_up(self, sent):
+        async def go():
+            ui = JsonUI(sent.append)
+            hooks = ui.hooks()
+            await hooks.on_llm_end(None, None, SimpleNamespace(usage=usage(1000, 50)))
+            await hooks.on_llm_end(None, None, SimpleNamespace(usage=usage(1500, 20, cached=900)))
+            ui.show_usage()
+            ui.tokens.start_turn()
+            await hooks.on_llm_end(None, None, SimpleNamespace(usage=usage(1700, 10, cached=1200)))
+            ui.show_usage()
+
+        asyncio.run(go())
+        first, second = events(sent)
+
+        assert first == {"type": "usage", "turn": {"calls": 2, "input": 2500, "cached": 900, "output": 70},
+                         "session": {"calls": 2, "input": 2500, "cached": 900, "output": 70}, "last_input": 1500}
+        assert second["turn"] == {"calls": 1, "input": 1700, "cached": 1200, "output": 10}
+        assert second["session"] == {"calls": 3, "input": 4200, "cached": 2100, "output": 80}
+        assert second["last_input"] == 1700
+
+    def test_nothing_is_sent_when_no_tokens_were_reported(self, sent):
+        async def go():
+            ui = JsonUI(sent.append)
+            ui.show_usage()
+            await ui.hooks().on_llm_end(None, None, SimpleNamespace(usage=Usage()))
+            ui.show_usage()
+
+        asyncio.run(go())
+        assert sent == []
 
 
 class TestApproval:

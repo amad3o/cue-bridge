@@ -55,6 +55,12 @@ describe("reduce", () => {
     expect(s.closed).toBe(false);
   });
 
+  it("adds the token counts as a line of their own", () => {
+    const count = { calls: 1, input: 100, cached: 0, output: 7 };
+    const s = feed([{ type: "reply", text: "ok" }, { type: "usage", turn: count, session: count, last_input: 100 }]);
+    expect(s.entries.at(-1)).toEqual({ kind: "usage", turn: count, session: count, lastInput: 100 });
+  });
+
   it("closing drops any open question and says so", () => {
     let s = feed([{ type: "approval_request", id: "approval-1", name: "x", arguments: null, preview: [] }]);
     s = reduce(s, { type: "closed", note: "The agent stopped." });

@@ -127,6 +127,22 @@ def build_agent(server: MCPServerStdio) -> Agent:
     )
 
 
+async def answer(agent: Agent, conversation: list[Any], text: str, ui: JsonUI) -> list[Any]:
+    """Answer one message, telling the screen the reply or the error, then the tokens used. Returns the new history."""
+    ui.tokens.start_turn()
+
+    try:
+        result = await run_turn(agent, [*conversation, {"role": "user", "content": text}], ui.ask, ui)
+    except Exception as error:  # a failed model call or a turn limit should not end the chat; the question can be retried
+        ui.show_error(f"{type(error).__name__}: {error}")
+        return conversation
+    else:
+        ui.show_reply(result.final_output)
+        return result.to_input_list()
+    finally:
+        ui.show_usage()
+
+
 async def chat(ui: JsonUI, stdin: Any) -> None:
     # The SDK sends traces to OpenAI by default; the tool results hold the user's library, so keep them local.
     set_tracing_disabled(True)
@@ -144,17 +160,8 @@ async def chat(ui: JsonUI, stdin: Any) -> None:
         conversation: list[Any] = []
 
         while (line := await ui.next_user_text()) is not None:
-            if not line.strip():
-                continue
-
-            try:
-                result = await run_turn(agent, [*conversation, {"role": "user", "content": line}], ui.ask, ui)
-            except Exception as error:  # a failed model call or a turn limit should not end the chat; the question can be retried
-                ui.show_error(f"{type(error).__name__}: {error}")
-                continue
-
-            conversation = result.to_input_list()
-            ui.show_reply(result.final_output)
+            if line.strip():
+                conversation = await answer(agent, conversation, line, ui)
 
 
 def main() -> None:

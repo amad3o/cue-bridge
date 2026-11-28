@@ -12,6 +12,9 @@ Agent to screen (stdout), each a JSON object with a "type":
                                                          preview is what its dry run said, as a list of lines
   reply             text                                 the model's answer (markdown)
   error             message                              the turn failed; the chat goes on
+  usage             turn, session, last_input            tokens used, sent after a reply or an error; turn (this message) and
+                                                         session are each {calls, input, cached, output}; last_input is
+                                                         what the latest model call sent
 
 Screen to agent (stdin):
   user_message      text
@@ -28,9 +31,12 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import asdict
 from typing import Any
 
 from agents import RunHooks
+
+from cuebridge.agent.tokens import TokenMeter
 
 MAX_VALUE_CHARS = 70
 ERROR_PREFIX = "Error executing tool"  # how the MCP library words a tool that failed
@@ -74,12 +80,15 @@ def parse_message(line: str) -> dict[str, Any] | None:
     return message if isinstance(message, dict) and isinstance(message.get("type"), str) else None
 
 
-class ToolLines(RunHooks):
-    """Tells the screen when each tool starts and finishes, with how long it took."""
+class ScreenHooks(RunHooks):
+    """Tells the screen when each tool starts and finishes, with how long it took, and counts each model call's tokens."""
 
     def __init__(self, ui: "JsonUI") -> None:
         self.ui = ui
         self.started: dict[str, float] = {}
+
+    async def on_llm_end(self, context: Any, agent: Any, response: Any) -> None:
+        self.ui.tokens.add(response.usage)
 
     @staticmethod
     def call_id(context: Any, tool: Any) -> str:
@@ -107,6 +116,7 @@ class JsonUI:
         self.send = send
         self.incoming: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self.approvals = 0
+        self.tokens = TokenMeter()
 
     def emit(self, type: str, **fields: Any) -> None:
         self.send(json.dumps({"type": type, **fields}, ensure_ascii=False, default=str))
@@ -146,8 +156,8 @@ class JsonUI:
         finally:
             self.emit("thinking", on=False)
 
-    def hooks(self) -> ToolLines:
-        return ToolLines(self)
+    def hooks(self) -> ScreenHooks:
+        return ScreenHooks(self)
 
     def ready(self, tool_count: int, gated_count: int) -> None:
         self.emit("ready", tools=tool_count, gated=gated_count)
@@ -163,6 +173,13 @@ class JsonUI:
 
     def show_error(self, message: str) -> None:
         self.emit("error", message=message)
+
+    def show_usage(self) -> None:
+        """Report the tokens used, unless the latest message used none that the provider reported."""
+        turn = self.tokens.turn
+
+        if turn.input or turn.output:
+            self.emit("usage", turn=asdict(turn), session=asdict(self.tokens.session), last_input=self.tokens.last_input)
 
     async def ask(self, name: str, arguments: dict[str, Any] | None, preview: list[str]) -> bool:
         """Ask the screen about one real change. Only a matching approval_response with approve === true goes ahead."""
