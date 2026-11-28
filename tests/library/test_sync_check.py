@@ -93,6 +93,24 @@ class TestReport:
         assert item["count"] == 1 and item["fix"] == "sync_playlists_to_rekordbox"
         assert report["tracksAndPlaylists"]["playlists"]["differ"][0]["name"] == "Warm"
 
+    @pytest.mark.parametrize("set_ids,listed,what", [
+        (("c2", "c1"), "sameTracksDifferentOrder", "playlists with the same tracks in a different order"),
+        (("c1", "c2", "c2"), "sameTracksDifferentRepeats",
+         "playlists with the same tracks repeated a different number of times"),
+    ])
+    def test_order_and_repeats_stop_it_being_in_sync(self, tmp_path, set_ids, listed, what):
+        lib, real = music(tmp_path)
+        snap = snapshot(tmp_path, real, set_ids=set_ids)
+        snap = rd.DbSnapshot(tuple(c if c.id != "c9" else rd.DbContent("c9", "Renamed", "X", str(real), 200_000) for c in snap.contents), snap.playlists)
+
+        report = sync_check.build_report(inputs(tmp_path, snapshot=snap))
+        playlists = report["tracksAndPlaylists"]["playlists"]
+
+        assert report["inSync"] is False
+        assert playlists[listed] == ["Set"] and playlists["differ"] == [] and playlists["inSync"] == 1
+        item = attention(report)[("playlists", what)]
+        assert item["count"] == 1 and item["fix"].startswith("no tool")
+
     def test_a_track_not_in_rekordbox_is_reported(self, tmp_path):
         lib, real = music(tmp_path)
         snap = snapshot(tmp_path, real)

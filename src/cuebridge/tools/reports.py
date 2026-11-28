@@ -301,7 +301,8 @@ def check_sync_status(
 
     It checks, and says which tool would fix each thing it finds:
     - tracks and playlists, Apple Music against Rekordbox (playlisted Apple
-      tracks only). Rekordbox's live database is read through a copy when it
+      tracks only), including each playlist's track order and repeats. Serato's
+      own playlists and crates aren't looked at. Rekordbox's live database is read through a copy when it
       can be, and is preferred over the XML export, which may be days old. Rekordbox
       may stay open.
     - files: Rekordbox tracks whose file is missing, whether the real file can be

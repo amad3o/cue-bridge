@@ -4,10 +4,12 @@ Tracks are paired with the matcher (path, file name, then title and artist).
 A Rekordbox track with no clear Apple Music counterpart is "Rekordbox only",
 an Apple Music track in a playlist that no Rekordbox track maps to is "Apple Music
 only" (tracks in no playlist are kept apart: they aren't meant for Rekordbox), and a
-playlist is compared by name and then by the tracks it holds (not their order).
+playlist is compared by name and then by the tracks it holds. `status` is about which tracks those are; when they
+are the same, `order_differs` and `repeats_differ` say whether their order, or how often each appears, differs.
 """
 
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass, field
 
 from cuebridge.models import Track
@@ -27,6 +29,13 @@ class PlaylistDrift:
     rekordbox_count: int | None
     apple_only: tuple[MusicTrack, ...] = ()  # in the Apple Music playlist, not in the Rekordbox one
     rekordbox_only: tuple[Track, ...] = ()  # in the Rekordbox playlist, not in the Apple Music one
+    # only looked at when the playlist is "in_sync", that is, holds the same tracks
+    order_differs: bool = False  # ignoring repeats, by where each track first appears
+    repeats_differ: bool = False  # some track appears more times on one side
+
+    @property
+    def matches_exactly(self) -> bool:
+        return self.status == "in_sync" and not self.order_differs and not self.repeats_differ
 
 
 @dataclass
@@ -70,8 +79,22 @@ def _compare_playlist(
         if k in rb_tracks and not apple_ids.intersection(apple_entries_for_rb.get(k, ()))
     )
     status = "in_sync" if not apple_only and not rekordbox_only else "differs"
+    order_differs = repeats_differ = False
 
-    return PlaylistDrift(apple.name, status, len(apple.track_ids), len(rekordbox.track_ids), apple_only, rekordbox_only)
+    if status == "in_sync":
+        # One file can have several rows in Rekordbox (and several Apple Music entries), so compare each position by
+        # the set of Rekordbox rows that are that file.
+        in_apple = [frozenset(rb_for_apple[i]) for i in apple.track_ids if i in music.tracks_by_id]
+        in_rb = [
+            frozenset(rb_for_apple[min(apple_entries_for_rb[k])]) for k in rekordbox.track_ids if k in rb_tracks
+        ]
+        order_differs = list(dict.fromkeys(in_apple)) != list(dict.fromkeys(in_rb))
+        repeats_differ = Counter(in_apple) != Counter(in_rb)
+
+    return PlaylistDrift(
+        apple.name, status, len(apple.track_ids), len(rekordbox.track_ids), apple_only, rekordbox_only,
+        order_differs, repeats_differ,
+    )
 
 
 def compare_libraries(

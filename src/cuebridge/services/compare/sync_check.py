@@ -69,11 +69,17 @@ def _playlists_section(inputs: Inputs, attention: list[dict]) -> dict:
     result = drift.compare_libraries(tracks, playlists, inputs.music)
     differing = [p for p in result.playlists if p.status == "differs"]
     missing = [p for p in result.playlists if p.status == "missing_in_rekordbox"]
+    reordered = [p.name for p in result.playlists if p.order_differs]
+    repeated = [p.name for p in result.playlists if p.repeats_differ]
 
     _attention(attention, "playlists", "Apple Music playlists that differ from Rekordbox's", len(differing),
                "sync_playlists_to_rekordbox")
     _attention(attention, "playlists", "Apple Music playlists Rekordbox doesn't have", len(missing),
                "export_playlists_for_rekordbox, then import in Rekordbox")
+    _attention(attention, "playlists", "playlists with the same tracks in a different order", len(reordered),
+               "no tool reorders a Rekordbox playlist: reorder it in Rekordbox")
+    _attention(attention, "playlists", "playlists with the same tracks repeated a different number of times", len(repeated),
+               "no tool changes repeats: make the two match in Apple Music or Rekordbox")
     _attention(attention, "tracks", "playlisted Apple Music tracks that aren't in Rekordbox", len(result.apple_only),
                "export_playlists_for_rekordbox, then import in Rekordbox")
     _attention(attention, "tracks", "tracks that couldn't be matched unambiguously", len(result.ambiguous),
@@ -88,11 +94,13 @@ def _playlists_section(inputs: Inputs, attention: list[dict]) -> dict:
         "ambiguous": len(result.ambiguous),
         "playlists": {
             "inAppleMusic": len(result.playlists),
-            "inSync": sum(1 for p in result.playlists if p.status == "in_sync"),
+            "inSync": sum(1 for p in result.playlists if p.matches_exactly),
             "differ": [
                 {"name": p.name, "onlyInAppleMusic": len(p.apple_only), "onlyInRekordbox": len(p.rekordbox_only)}
                 for p in differing[:MAX_LISTED]
             ],
+            "sameTracksDifferentOrder": reordered[:MAX_LISTED],
+            "sameTracksDifferentRepeats": repeated[:MAX_LISTED],
             "missingInRekordbox": [p.name for p in missing[:MAX_LISTED]],
             "onlyInRekordbox": [p.name for p in result.rekordbox_only_playlists][:MAX_LISTED],
         },

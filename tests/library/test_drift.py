@@ -4,11 +4,12 @@ from mcp.server.mcpserver.exceptions import ToolError
 from test_apple_music import rb
 
 from cuebridge import mcp_server as server
+from cuebridge.models import Track
 from cuebridge.services.apple_music import service as apple_music_service
 from cuebridge.services.apple_music.xml_parser import parse_apple_music_plist
 from cuebridge.services.compare import drift
 from cuebridge.services.compare.track_matcher import AppleMusicIndex
-from cuebridge.services.rekordbox.parser import parse_rekordbox_playlists
+from cuebridge.services.rekordbox.parser import RekordboxPlaylist, parse_rekordbox_playlists
 from cuebridge.services.rekordbox.service import clear_cache, get_rekordbox_library
 
 
@@ -51,6 +52,55 @@ class TestRekordboxPlaylists:
         clear_cache()
 
         assert [p.name for p in get_rekordbox_library(path).playlists] == ["Set"]
+
+
+class TestOrderAndRepeats:
+    """A playlist holding the right tracks can still list them in another order, or repeat them differently."""
+
+    def compare(self, apple_ids, rekordbox_ids, extra_rows=()):
+        music = parse_apple_music_plist(library_bytes(
+            [music_track(i, n, "X", f"/Music/{n}.mp3") for i, n in ((1, "a"), (2, "b"), (3, "c"))]
+            + [music_track(9, "a", "X", "/Music/a.mp3")],  # a second Apple Music entry for a.mp3
+            [playlist("Set", *apple_ids)],
+        ))
+        rows = [("r1", "a"), ("r2", "b"), ("r3", "c"), *extra_rows]
+        tracks = [Track(trackId=k, trackTitle=n, artist="X", filePath=f"/Music/{n}.mp3", cues=[]) for k, n in rows]
+        (result,) = drift.compare_libraries(tracks, [RekordboxPlaylist("Set", (), tuple(rekordbox_ids))], music).playlists
+
+        return result
+
+    def test_the_same_tracks_in_the_same_order_match_exactly(self):
+        assert self.compare([1, 2, 3], ["r1", "r2", "r3"]).matches_exactly
+
+    def test_another_order_is_reported_without_calling_the_tracks_different(self):
+        result = self.compare([1, 2, 3], ["r1", "r3", "r2"])
+
+        assert result.status == "in_sync" and result.order_differs and not result.repeats_differ
+        assert not result.matches_exactly
+
+    @pytest.mark.parametrize("apple,rekordbox", [([1, 2, 1], ["r1", "r2"]), ([1, 2], ["r1", "r2", "r2"])])
+    def test_a_repeat_on_one_side_only_is_reported(self, apple, rekordbox):
+        result = self.compare(apple, rekordbox)
+
+        assert result.repeats_differ and not result.order_differs
+
+    def test_repeats_that_match_are_fine(self):
+        assert self.compare([1, 2, 1], ["r1", "r2", "r1"]).matches_exactly
+
+    @pytest.mark.parametrize("held", ["r1", "r1-again"])
+    def test_either_of_two_rekordbox_rows_for_one_file_matches(self, held):
+        result = self.compare([1, 2], [held, "r2"], extra_rows=[("r1-again", "a")])
+
+        assert result.matches_exactly
+
+    def test_either_of_two_apple_music_entries_for_one_file_matches(self):
+        assert self.compare([9, 2], ["r1", "r2"]).matches_exactly
+
+    def test_order_is_not_judged_when_the_tracks_themselves_differ(self):
+        result = self.compare([1, 2, 3], ["r2", "r1"])
+
+        assert result.status == "differs" and not result.order_differs and not result.repeats_differ
+        assert not result.matches_exactly
 
 
 class TestSameFileTwice:
