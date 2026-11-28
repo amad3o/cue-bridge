@@ -3,7 +3,9 @@
 For every track that has cues in Rekordbox, the hot cues in the audio file's
 `Serato Markers2` tag are replaced by the Rekordbox ones (hot cues in their own
 slots, plus memory cues in the free slots), with the timing correction for the
-file type. Tracks without Rekordbox cues are never touched.
+file type. Tracks without Rekordbox cues are never touched. On a track that does
+have them, a Serato cue Rekordbox doesn't have is removed, so the plan says which
+cues would be removed or moved.
 
 Serato keeps the cues twice: in `Markers2` and in the older `Markers_` frame,
 which holds the first five cues and which Serato DJ Pro still reads. Both are
@@ -44,11 +46,13 @@ from cuebridge.services.serato.markers import (
     replace_cues,
 )
 from cuebridge.services.serato.tags import (
+    HAS_CUES,
     Markers2Location,
     UnsupportedFileError,
     locate_frame,
     locate_legacy_markers,
     locate_markers2,
+    why_it_may_have_cues,
 )
 
 # Rekordbox exports this green (40, 226, 20) on every hot cue nobody has recolored,
@@ -107,6 +111,24 @@ class SyncItem:
     legacy_new_data: bytes | None = None
     memory_cues_without_slot: int = 0
     relocated_from: str | None = None  # the Rekordbox path, when the file was found elsewhere
+
+    @property
+    def removed(self) -> tuple[tuple[int, int], ...]:
+        """Serato cues, as (slot, ms), in slots that would be left empty."""
+        if self.status != "change":
+            return ()
+
+        kept = {slot for slot, _ in self.after}
+        return tuple((slot, ms) for slot, ms in self.before if slot not in kept)
+
+    @property
+    def moved(self) -> tuple[tuple[int, int, int], ...]:
+        """Serato cues, as (slot, ms now, ms after), whose slot would get a different time."""
+        if self.status != "change":
+            return ()
+
+        new = dict(self.after)
+        return tuple((slot, ms, new[slot]) for slot, ms in self.before if slot in new and new[slot] != ms)
 
     @property
     def regions(self) -> tuple[Region, ...]:
@@ -282,6 +304,39 @@ def build_sync_plan(
     items = [_plan_track(t, include_memory_cues, default_color, moved_files) for t in candidates[:max_files]]
 
     return SyncPlan(tuple(items), loops_ignored=loops, not_planned=max(0, len(candidates) - max_files))
+
+
+@dataclass
+class SeratoOnly:
+    """Tracks whose cues, if any, are only in Serato: the sync never reads them."""
+
+    with_cues: list[Track] = field(default_factory=list)
+    unchecked: Counter = field(default_factory=Counter)  # reason -> tracks whose Serato cues couldn't be ruled out
+    checked: int = 0  # tracks looked at, including the unchecked ones
+
+
+def find_serato_only(tracks: list[Track], moved_files: dict[str, str] | None = None) -> SeratoOnly:
+    """Which of these tracks have cues in Serato and none in Rekordbox for the sync to copy (loops don't count)."""
+    found = SeratoOnly()
+
+    for track in tracks:
+        if any(c.cueType != "loop" for c in track.cues):
+            continue
+
+        found.checked += 1
+        path = track.filePath
+
+        if path and moved_files and track.trackId in moved_files and not Path(path).is_file():
+            path = moved_files[track.trackId]
+
+        doubt = why_it_may_have_cues(path)
+
+        if doubt == HAS_CUES:
+            found.with_cues.append(track)
+        elif doubt:
+            found.unchecked[doubt] += 1
+
+    return found
 
 
 # ---------------------------------------------------------------------------

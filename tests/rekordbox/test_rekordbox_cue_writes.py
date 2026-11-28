@@ -2,11 +2,14 @@ import json
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
+from serato_helpers import BPMLOCK, COLOR, make_mp3
 from test_rekordbox_db import FakeBackend, db_state
 
 from cuebridge import mcp_server as server
 from cuebridge.services.rekordbox import cue_writes as cw
 from cuebridge.services.rekordbox import db as rd
+from cuebridge.services.serato import tags as serato_tags
+from cuebridge.services.serato.markers import CueEntry
 
 # Kinds as Rekordbox stores them: 0 memory, 1-3 A-C, 5-9 D-H; 4 and 10+ are unknown to CueBridge.
 
@@ -28,6 +31,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(rd, "rekordbox_running", lambda: False)
     monkeypatch.setattr(rd, "default_backend", lambda: backend)
     monkeypatch.setattr(rd, "find_database", lambda: db)
+    # The fake database's paths don't exist. TestSeratoCuesAreProtected uses real files and the real check.
+    monkeypatch.setattr(serato_tags, "why_it_may_have_cues", lambda path: None)
     backend = FakeBackend()
 
     def write(cues):
@@ -69,6 +74,94 @@ class TestDefaultCuePlan:
         plan = cw.plan_default_cues(snap(env))
 
         assert plan.additions == [] and plan.not_playlisted == 4
+
+
+REAL_CHECK = serato_tags.why_it_may_have_cues  # kept before the fixture replaces it
+
+
+class TestSeratoCuesAreProtected:
+    """Giving a track its first Rekordbox cue lets the sync replace its Serato cues, so check the files themselves."""
+
+    @pytest.fixture
+    def files(self, env, tmp_path, monkeypatch):
+        """Point the fake database's tracks at the given paths and use the real check."""
+        monkeypatch.setattr(serato_tags, "why_it_may_have_cues", REAL_CHECK)
+        env["write"]([])
+
+        def use(**paths):
+            state = json.loads(env["db"].read_text())
+
+            for content in state["contents"]:
+                if content["id"] in paths:
+                    content["path"] = str(paths[content["id"]])
+
+            env["db"].write_text(json.dumps(state))
+
+        return use
+
+    def test_only_a_file_confirmed_to_have_no_serato_cues_gets_the_default(self, env, files, tmp_path):
+        cue = CueEntry(index=1, position_ms=5000, color="#cc0000", name="")
+        files(
+            c1=make_mp3(tmp_path / "cued.mp3", [COLOR, cue, BPMLOCK]),
+            c2=make_mp3(tmp_path / "empty-tag.mp3", [COLOR, BPMLOCK]),
+            c4=make_mp3(tmp_path / "never-loaded.mp3"),
+        )
+
+        plan = cw.plan_default_cues(snap(env))
+
+        assert [a.content_id for a in plan.additions] == ["c2", "c4"]
+        assert plan.has_serato_cues == ["A"] and not plan.serato_unchecked
+
+    def test_any_doubt_leaves_the_track_alone(self, env, files, tmp_path):
+        broken = tmp_path / "broken.wav"
+        broken.write_bytes(b"not a wav")
+        song = tmp_path / "song.m4a"
+        song.write_bytes(b"x")
+        files(c1=song, c2=tmp_path / "gone.mp3", c4=broken)
+
+        plan = cw.plan_default_cues(snap(env))
+
+        assert plan.additions == [] and plan.has_serato_cues == []
+        assert dict(plan.serato_unchecked) == {
+            ".m4a files can't be checked yet": 1, "the file wasn't found": 1, "its tags couldn't be read": 1,
+        }
+
+    @pytest.mark.parametrize("path,reason", [
+        (None, "the track has no file path"),
+        ("spotify:track:abc", "not a local file (a streaming track)"),
+    ])
+    def test_tracks_without_a_local_file_are_in_doubt(self, path, reason):
+        assert REAL_CHECK(path) == reason
+
+    def test_the_older_serato_tag_alone_is_in_doubt(self, tmp_path):
+        path = make_mp3(tmp_path / "old.mp3", legacy=b"\x02\x05" + b"\x00" * 316)
+        assert "older cue tag" in REAL_CHECK(str(path))
+
+    def test_the_dry_run_says_how_many_were_left_alone(self, env, files, tmp_path):
+        cue = CueEntry(index=0, position_ms=5000, color="#cc0000", name="")
+        files(
+            c1=make_mp3(tmp_path / "cued.mp3", [COLOR, cue, BPMLOCK]),
+            c2=make_mp3(tmp_path / "free.mp3"),
+            c4=tmp_path / "gone.mp3",
+        )
+
+        result = server.set_default_cue()
+
+        assert result["tracksToChange"] == 1
+        assert result["tracksSkippedBecauseTheyHaveSeratoCues"] == 1
+        assert result["tracksSkippedBecauseSeratoCuesCouldNotBeRuledOut"] == 1
+        assert "1 track(s) with Serato cues, and 1 where" in result["summary"]
+
+    def test_serato_cues_added_after_the_dry_run_stop_the_write(self, env, files, tmp_path):
+        paths = {c: make_mp3(tmp_path / f"{c}.mp3") for c in ("c1", "c2", "c4")}
+        files(**paths)
+        plan = cw.plan_default_cues(snap(env))
+        make_mp3(paths["c2"], [COLOR, CueEntry(index=0, position_ms=1, color="#cc0000", name=""), BPMLOCK])
+
+        with pytest.raises(rd.DatabaseError, match="changed since"):
+            cw.apply_cue_plan(plan, env["db"], env["backend"], cw.plan_default_cues)
+
+        assert snap(env).cues == ()
 
 
 class TestMemoryToHotPlan:

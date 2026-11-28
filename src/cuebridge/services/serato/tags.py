@@ -77,6 +77,50 @@ def read_cues(path: str | Path) -> list[CueEntry]:
     return [e for e in read_markers2(path) or [] if isinstance(e, CueEntry)]
 
 
+HAS_CUES = "has Serato cues"
+
+
+def why_it_may_have_cues(path: str | None) -> str | None:
+    """None only when the file is confirmed to hold no Serato hot cue. Otherwise HAS_CUES, or why it can't be ruled out.
+
+    For deciding whether something may lead to a file's Serato cues being replaced, so every doubt counts. The
+    reasons leave out file names, so they can be counted.
+    """
+    if not path:
+        return "the track has no file path"
+
+    file_path = Path(path)
+
+    if not file_path.is_absolute():
+        return "not a local file (a streaming track)"
+
+    if file_path.suffix.lower() not in SUPPORTED_SUFFIXES:
+        return f"{file_path.suffix.lower() or 'extensionless'} files can't be checked yet"
+
+    try:
+        if not file_path.is_file():
+            return "the file wasn't found"
+
+        tags = load_id3(file_path)
+
+        if tags is None:
+            return None
+
+        frames = tags.getall(_FRAME_KEY)
+
+        if not frames:
+            if tags.getall(f"GEOB:{LEGACY_DESCRIPTION}"):
+                return "it has only Serato's older cue tag, which can't be read yet"
+
+            return None
+
+        entries = decode_markers2(frames[0].data)
+    except Exception:  # a broken or unusual tag must count as doubt, never as "no cues"
+        return "its tags couldn't be read"
+
+    return HAS_CUES if any(isinstance(e, CueEntry) for e in entries) else None
+
+
 def read_first_beat(path: str | Path) -> tuple[float, float] | None:
     """(position in ms, BPM) of the first marker of Serato's beat grid, or None.
 

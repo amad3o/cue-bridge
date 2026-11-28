@@ -49,6 +49,44 @@ def outside(path: Path) -> bytes:
     return data[: location.offset] + data[location.offset + location.length :]
 
 
+class TestFindSeratoOnly:
+    def test_it_finds_cued_files_among_tracks_with_no_rekordbox_cue(self, audio, tmp_path):
+        bare = make_mp3(tmp_path / "bare.mp3", [COLOR, BPMLOCK])
+        tracks = [rb_track(audio), rb_track(bare), rb_track(tmp_path / "gone.mp3")]
+
+        found = sync.find_serato_only(tracks)
+
+        assert [t.filePath for t in found.with_cues] == [str(audio)]
+        assert found.checked == 3 and dict(found.unchecked) == {"the file wasn't found": 1}
+
+    def test_a_track_with_a_rekordbox_cue_is_the_sync_s_business(self, audio):
+        found = sync.find_serato_only([rb_track(audio, rb_cue(slot=0, ms=1000))])
+
+        assert found.checked == 0 and found.with_cues == []
+
+    def test_a_rekordbox_loop_alone_does_not_count_as_a_cue(self, audio):
+        found = sync.find_serato_only([rb_track(audio, rb_cue(kind="loop", slot=0, ms=1000))])
+
+        assert len(found.with_cues) == 1
+
+    def test_a_moved_file_is_read_where_it_is_now(self, audio, tmp_path):
+        track = rb_track(tmp_path / "old-name.mp3")
+
+        found = sync.find_serato_only([track], moved_files={track.trackId: str(audio)})
+
+        assert len(found.with_cues) == 1
+
+
+class TestRemovedAndMoved:
+    def test_slots_left_empty_are_removed_and_changed_times_are_moved(self, tmp_path):
+        path = make_wav(tmp_path / "a.wav", [COLOR, CueEntry(0, 500, "#cc0000"), CueEntry(1, 7000, "#cc0000"), BPMLOCK])
+
+        (item,) = plan_for(path, rb_cue(slot=0, ms=0)).to_change
+
+        assert item.removed == ((2, 7000),)
+        assert item.moved == ((1, 500, 0),)
+
+
 class TestPlanning:
     def test_a_changed_file_is_planned_with_before_and_after(self, audio):
         plan = plan_for(audio, rb_cue(slot=0, ms=1000), rb_cue(slot=2, ms=5000))

@@ -47,14 +47,27 @@ def _cue_write_tool(
         "tracksSkippedForUnreadableCues": plan.skipped_unreadable[:10],
     }
 
+    protected = ""
+
+    if plan.has_serato_cues or plan.serato_unchecked:
+        unchecked = sum(plan.serato_unchecked.values())
+        result["tracksSkippedBecauseTheyHaveSeratoCues"] = len(plan.has_serato_cues)
+        result["examplesWithSeratoCues"] = plan.has_serato_cues[:10]
+        result["tracksSkippedBecauseSeratoCuesCouldNotBeRuledOut"] = unchecked
+        result["whyNotRuledOut"] = dict(plan.serato_unchecked)
+        protected = (
+            f" Left alone: {len(plan.has_serato_cues)} track(s) with Serato cues, and {unchecked} where Serato cues "
+            "couldn't be ruled out."
+        )
+
     if not plan.additions:
-        result["summary"] = "Nothing to do: no cues need adding, and nothing was written."
+        result["summary"] = "Nothing to do: no cues need adding, and nothing was written." + protected
         return result
 
     if dry_run:
         result["summary"] = (
             f"Would {what}: {plan.cue_count} cue(s) on {len(plan.additions)} track(s), written to Rekordbox's database. "
-            "Nothing has been written." + (" Quit Rekordbox before applying." if running else "")
+            "Nothing has been written." + protected + (" Quit Rekordbox before applying." if running else "")
         )
         return result
 
@@ -70,7 +83,7 @@ def _cue_write_tool(
     result["summary"] = (
         f"Did {what}: added {plan.cue_count} cue(s) to {len(plan.additions)} track(s) and verified the database. "
         f"Backup: {outcome.backup}. To reverse this, call undo_rekordbox_cue_additions (journal: {outcome.journal}). "
-        "You can open Rekordbox now."
+        "You can open Rekordbox now." + protected
     )
     return result
 
@@ -94,6 +107,12 @@ def set_default_cue(
     (`playlisted_only`), because the collection also holds thousands of
     sample-pack files nobody plays from a playlist. Tracks that already have any
     cue or loop are left alone, so running it again changes nothing.
+
+    To protect Serato's cues, a track is also left alone unless its audio file is
+    confirmed to hold none: a later sync_cues_to_serato would replace them with
+    this cue. That skips files with Serato cues, and files that can't be checked
+    (only MP3 and WAV can be so far; also missing and streaming files). Tell the
+    user how many were left alone and why.
 
     - Call it with dry_run=true first (the default). Rekordbox may be open for
       that. Show the user the number of tracks and a few examples.

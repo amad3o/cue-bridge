@@ -14,7 +14,7 @@ Early development, used on one real library. There are 28 tools; results are pag
 | Read and search | `load_apple_music_library` (live from the Music app, or an XML), `get_playlist_tracks`, `load_rekordbox_library`, `search_tracks`, `get_track_cues`, `find_tracks_without_cues` (the last three read the XML export) |
 | Compare and audit | `compare_libraries`, `list_library_differences`, `find_missing_files`, `compare_cues`, `audit_music_library` |
 | Cues to Serato | `sync_cues_to_serato` writes Rekordbox's cues into MP3 and WAV tags; Rekordbox wins |
-| Cues in Rekordbox | `set_default_cue` (hot cue A at 0:00 on tracks with no cue), `duplicate_memory_cues_to_hot_cues` |
+| Cues in Rekordbox | `set_default_cue` (hot cue A at 0:00 on tracks with no cue in Rekordbox, once their files are confirmed to have no Serato cues), `duplicate_memory_cues_to_hot_cues` |
 | Playlists | `sync_playlists_to_rekordbox` (updates existing playlists), `export_playlists_for_rekordbox` (XML import, for new tracks and playlists) |
 | Repairs | `fix_moved_files_in_rekordbox`, `report_stale_duplicates`, `create_review_playlists`, `clean_up_stale_duplicates` |
 | Undo | six `undo_*` tools, one for each writer above except the XML export |
@@ -66,6 +66,7 @@ The tools that change something follow one pattern:
 
 - **Dry run by default.** Nothing is written until `dry_run=false`.
 - **Guarded writes.** Edits to Rekordbox's database and Serato's tags require Rekordbox or Serato DJ Pro (respectively) to be closed, keep a backup or the original bytes, write a journal, read the result back, and can be undone. Most also require the counts or files from the dry run.
+- **Serato cues.** In a sync Rekordbox wins, so on a track with Rekordbox cues, other Serato cues are removed. The sync's dry run counts what it would remove or move. `set_default_cue` leaves a track alone if its file has Serato cues or can't be checked (so far only MP3 and WAV can be), and `check_sync_status` reports tracks with cues only in Serato.
 - **The XML export** only edits the XML file you import into Rekordbox. It has no undo tool.
 - **Approval.** The built-in agent refuses a real change unless the same call's dry run happened before your latest message. It then asks Yes or No, starting on No, and shows what that dry run said. This is enforced in Python (`agent/runner.py`, `agent/previews.py`); neither the model nor the screen can skip it. In other clients, you rely on that client's permission prompts.
 

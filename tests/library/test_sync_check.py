@@ -1,3 +1,4 @@
+from collections import Counter
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -5,10 +6,12 @@ import pytest
 from apple_helpers import library_bytes, music_track, playlist, write_library
 
 from cuebridge import mcp_server as server
+from cuebridge.models import Track
 from cuebridge.services.apple_music import service as apple_music_service
 from cuebridge.services.apple_music.xml_parser import parse_apple_music_plist
 from cuebridge.services.compare import sync_check
 from cuebridge.services.rekordbox import db as rd
+from cuebridge.services.serato import sync as serato_sync
 
 
 def music(tmp_path):
@@ -38,9 +41,9 @@ def snapshot(tmp_path, real, set_ids=("c1", "c2"), warm_ids=("c2",), extra=()):
     return rd.DbSnapshot(tuple(contents), tuple(playlists))
 
 
-def serato_plan(changes=0, unchanged=3, skipped=0):
+def serato_plan(changes=0, unchanged=3, skipped=0, removed=0):
     def item():
-        return SimpleNamespace(title="T", artist="X", before=((1, 1000),), after=((1, 2000),))
+        return SimpleNamespace(title="T", artist="X", before=((1, 1000),), after=((1, 2000),), removed=((2, 5000),) * removed)
 
     return SimpleNamespace(
         items=[object()] * (changes + unchanged + skipped), to_change=[item() for _ in range(changes)],
@@ -52,7 +55,7 @@ def serato_plan(changes=0, unchanged=3, skipped=0):
 def inputs(tmp_path, **kw):
     lib, real = music(tmp_path)
     base = dict(music=lib, snapshot=snapshot(tmp_path, real), database_path=tmp_path / "master.db",
-                serato_plan=serato_plan(), xml_path=tmp_path / "rb.xml",
+                serato_plan=serato_plan(), serato_only=serato_sync.SeratoOnly(checked=2), xml_path=tmp_path / "rb.xml",
                 xml_modified=datetime(2026, 1, 1, 12), database_modified=datetime(2026, 1, 1, 12))
     base.update(kw)
     return sync_check.Inputs(**base)
@@ -105,6 +108,44 @@ class TestReport:
         assert report["cues"]["differ"] == 2
         assert report["cues"]["differing"][0]["seratoNow"] != report["cues"]["differing"][0]["rekordboxWouldGive"]
         assert attention(report)[("cues", "tracks whose Serato cues differ from Rekordbox's")]["fix"] == "sync_cues_to_serato"
+
+    def in_sync_otherwise(self, tmp_path, **kw):
+        """A report whose only possible complaints come from the arguments: the one broken row is fine here."""
+        lib, real = music(tmp_path)
+        snap = snapshot(tmp_path, real)
+        snap = rd.DbSnapshot(tuple(c if c.id != "c9" else rd.DbContent("c9", "Renamed", "X", str(real), 200_000) for c in snap.contents), snap.playlists)
+
+        return sync_check.build_report(inputs(tmp_path, snapshot=snap, **kw))
+
+    def test_cues_only_in_serato_mean_not_in_sync(self, tmp_path):
+        only = serato_sync.SeratoOnly(with_cues=[Track(trackId="c2", trackTitle="Only", artist="X", cues=[])], checked=5)
+        report = self.in_sync_otherwise(tmp_path, serato_only=only)
+
+        assert report["inSync"] is False
+        assert report["cues"]["onlyInSerato"]["tracks"] == 1
+        assert report["cues"]["onlyInSerato"]["examples"] == [{"title": "Only", "artist": "X"}]
+        item = attention(report)[("cues", "tracks with cues in Serato but none in Rekordbox")]
+        assert item["count"] == 1 and "compare_cues" in item["fix"]
+
+    def test_not_looking_for_serato_only_cues_is_never_called_in_sync(self, tmp_path):
+        report = self.in_sync_otherwise(tmp_path, serato_only=None)
+
+        assert report["inSync"] is False
+        assert "cues that are only in serato" in report["summary"].lower()
+        assert "seratoOnlyNotChecked" in report["cues"]
+
+    def test_files_that_could_not_be_ruled_out_are_mentioned_in_the_summary(self, tmp_path):
+        only = serato_sync.SeratoOnly(unchecked=Counter({".m4a files can't be checked yet": 3}), checked=3)
+        report = self.in_sync_otherwise(tmp_path, serato_only=only)
+
+        assert report["inSync"] is True
+        assert "couldn't be ruled out on 3 track(s)" in report["summary"]
+
+    def test_a_sync_that_would_remove_serato_cues_says_so(self, tmp_path):
+        report = sync_check.build_report(inputs(tmp_path, serato_plan=serato_plan(changes=2, removed=3)))
+
+        assert report["cues"]["existingSeratoCuesASyncWouldRemove"] == 6
+        assert "remove 6 Serato cue(s)" in attention(report)[("cues", "tracks whose Serato cues differ from Rekordbox's")]["fix"]
 
     def test_an_export_older_than_the_database_is_a_warning(self, tmp_path):
         report = sync_check.build_report(inputs(tmp_path, cues_from_xml=True, database_modified=datetime(2026, 1, 2, 18)))

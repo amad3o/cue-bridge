@@ -7,6 +7,9 @@ Two plans, one apply and one undo:
 
 Only playlisted tracks are touched by default: the collection holds thousands of sample-pack
 files nobody plays from a playlist (and Pioneer's one-shots would each get a cue too).
+The default cue also skips a track unless its file is confirmed to hold no Serato cues: once a track has a
+Rekordbox cue, the Serato sync replaces the file's cues with Rekordbox's.
+
 A track that has a cue in a slot CueBridge can't read (kind 4, or 10 and up) is skipped and
 reported, since its free slots can't be worked out.
 
@@ -15,6 +18,7 @@ read-back verification with an immediate restore on any difference, and undo.
 """
 
 import json
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +41,7 @@ from cuebridge.services.rekordbox.db import (
     cuebridge_home,
     read_snapshot,
 )
+from cuebridge.services.serato import tags as serato_tags
 
 CUE_JOURNALS = "rekordbox-cues"
 # Hot cue slot (0 is A) -> the kind Rekordbox stores it under; the reverse of db_library.HOT_CUE_SLOTS.
@@ -59,6 +64,8 @@ class CuePlan:
     no_free_slot: list[tuple[str, int]] = field(default_factory=list)  # (title, memory cues left over)
     skipped_unreadable: list[str] = field(default_factory=list)  # tracks with cues in slots nobody has checked
     not_playlisted: int = 0  # tracks left out because they are in no playlist
+    has_serato_cues: list[str] = field(default_factory=list)  # titles left out to protect their Serato cues
+    serato_unchecked: Counter = field(default_factory=Counter)  # reason -> tracks left out because it can't be ruled out
 
     @property
     def cue_count(self) -> int:
@@ -82,7 +89,7 @@ def _scope(snapshot: DbSnapshot, playlisted_only: bool) -> tuple[list, int]:
 
 
 def plan_default_cues(snapshot: DbSnapshot, playlisted_only: bool = True) -> CuePlan:
-    """A hot cue A at 0:00 for each track that has no cue or loop at all."""
+    """A hot cue A at 0:00 for each track that has no cue or loop at all, in Rekordbox or (checked) in Serato."""
     plan = CuePlan("default cue")
     contents, plan.not_playlisted = _scope(snapshot, playlisted_only)
     with_cues = {c.content_id for c in snapshot.cues}
@@ -90,6 +97,14 @@ def plan_default_cues(snapshot: DbSnapshot, playlisted_only: bool = True) -> Cue
     for content in contents:
         if content.id in with_cues:
             plan.already_done += 1
+            continue
+
+        doubt = serato_tags.why_it_may_have_cues(content.path)
+
+        if doubt == serato_tags.HAS_CUES:
+            plan.has_serato_cues.append(content.title or content.id)
+        elif doubt:
+            plan.serato_unchecked[doubt] += 1
         else:
             plan.additions.append(CueAddition(content.id, content.title, content.artist, ((SLOT_KINDS[0], 0),)))
 

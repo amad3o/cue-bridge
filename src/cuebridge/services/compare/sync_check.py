@@ -41,6 +41,7 @@ class Inputs:
     database_modified: datetime | None = None
     serato_plan: object | None = None  # a serato_sync plan
     serato_error: str | None = None
+    serato_only: serato_sync.SeratoOnly | None = None  # None: tracks without Rekordbox cues weren't looked at
     cues_from: str | None = None  # where Rekordbox's cues were read from
     cues_from_xml: bool = False
     cue_notes: list[str] = field(default_factory=list)
@@ -156,7 +157,31 @@ def _cues_section(inputs: Inputs, attention: list[dict]) -> dict:
         attention.append({"area": "cues", "what": "the Rekordbox XML export is older than the database", "count": 1,
                           "fix": "export the collection from Rekordbox again (File > Export Collection in xml format)"})
 
-    _attention(attention, "cues", "tracks whose Serato cues differ from Rekordbox's", len(changes), "sync_cues_to_serato")
+    removed = sum(len(i.removed) for i in changes)
+    section["existingSeratoCuesASyncWouldRemove"] = removed
+    only = inputs.serato_only
+
+    if only is None:
+        section["seratoOnlyNotChecked"] = (
+            "Which tracks are in playlists is unknown here, so tracks with cues only in Serato weren't looked for."
+        )
+    else:
+        section["onlyInSerato"] = {
+            "tracks": len(only.with_cues),
+            "examples": [{"title": t.trackTitle, "artist": t.artist} for t in only.with_cues[:MAX_LISTED]],
+            "playlistedTracksWithoutRekordboxCuesLookedAt": only.checked,
+            "couldNotRuleOut": dict(only.unchecked),
+        }
+        _attention(
+            attention, "cues", "tracks with cues in Serato but none in Rekordbox", len(only.with_cues),
+            "no tool copies these into Rekordbox yet; compare_cues(show='serato_only') lists them. Don't add a "
+            "Rekordbox cue to one and then sync: that replaces its Serato cues",
+        )
+
+    _attention(
+        attention, "cues", "tracks whose Serato cues differ from Rekordbox's", len(changes),
+        "sync_cues_to_serato" + (f" (check its dry run first: it would remove {removed} Serato cue(s))" if removed else ""),
+    )
     _attention(attention, "cues", "notes about cues CueBridge couldn't fully read", len(inputs.cue_notes) if not inputs.cues_from_xml else 0,
                "see the notes under cues")
 
@@ -177,10 +202,18 @@ def build_report(inputs: Inputs) -> dict:
         "cues": _cues_section(inputs, attention),
     }
     unchecked = [name for name, section in sections.items() if "couldNotCheck" in section]
+
+    if "seratoOnlyNotChecked" in sections["cues"]:
+        unchecked.append("cues that are only in Serato")
+
     in_sync = not attention and not unchecked
 
     if in_sync:
         summary = "Apple Music, Rekordbox and Serato are in sync."
+        unread = sum(inputs.serato_only.unchecked.values())
+
+        if unread:
+            summary += f" Serato cues couldn't be ruled out on {unread} track(s) with none in Rekordbox."
     else:
         parts = []
 

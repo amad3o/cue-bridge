@@ -225,6 +225,27 @@ class TestSyncToSerato:
         assert example["seratoNow"] == "1: 0:00.500"
         assert example["afterSync"] == "1: 0:12.345, 2: 0:30.500"
 
+    def test_the_preview_counts_the_serato_cues_it_would_remove_or_move(self, library):
+        # the WAV's cue in slot 1 would move; a second Serato cue, in a slot Rekordbox leaves empty, would go
+        make_wav(library["wav"], [COLOR, CueEntry(0, 500, "#cc0000"), CueEntry(5, 90000, "#cc0000"), BPMLOCK])
+
+        result = server.sync_cues_to_serato(track_ids=["1"])
+
+        assert result["existingSeratoCuesRemoved"] == 1 and result["existingSeratoCuesMoved"] == 1
+        assert result["filesWhereExistingCuesAreRemovedOrMoved"] == 1
+        assert result["removedOrMovedExamples"] == [
+            {"title": "One", "artist": "A", "removed": "6: 1:30.000", "moved": ["slot 1: 0:00.500 to 0:12.345"]}
+        ]
+        assert result["summary"].startswith("Warning: this removes 1 existing Serato cue(s) and moves 1, on 1 file(s).")
+
+    def test_a_preview_that_only_adds_cues_has_no_warning(self, library):
+        make_wav(library["wav"], [COLOR, BPMLOCK])
+
+        result = server.sync_cues_to_serato(track_ids=["1"])
+
+        assert result["existingSeratoCuesRemoved"] == 0 and result["removedOrMovedExamples"] == []
+        assert not result["summary"].startswith("Warning")
+
     def test_applying_requires_the_file_count_from_the_dry_run(self, library):
         before = library["wav"].read_bytes()
 

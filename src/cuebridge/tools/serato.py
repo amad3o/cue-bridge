@@ -7,6 +7,7 @@ from mcp.types import ToolAnnotations
 
 from cuebridge.services.compare import cue_compare
 from cuebridge.services.reports import library_reports
+from cuebridge.services.reports.library_queries import format_time
 from cuebridge.services.serato import sync as serato_sync
 from cuebridge.tools.common import (
     READ_ONLY,
@@ -170,6 +171,8 @@ def sync_cues_to_serato(
     - Call it with dry_run=true first (the default). It changes nothing and
       reports how many files would change, which are skipped and why, and which
       files had a timing correction it could not verify.
+    - It also counts the existing Serato cues that would be removed or moved to
+      another time. Always tell the user those numbers.
     - Show the user that summary and get their go-ahead. Then call again with
       dry_run=false and expected_files set to the "filesToChange" number from
       the dry run. If the number no longer matches, nothing is written.
@@ -198,12 +201,29 @@ def sync_cues_to_serato(
 
     changes = plan.to_change
     running = serato_sync.is_serato_running()
+    losing = [i for i in changes if i.removed or i.moved]
+    removed = sum(len(i.removed) for i in changes)
+    moved_count = sum(len(i.moved) for i in changes)
 
     result = {
         "dryRun": dry_run,
         "cuesFrom": library.label,
         "cueNotes": library.notes,
         "filesToChange": len(changes),
+        "existingSeratoCuesRemoved": removed,
+        "existingSeratoCuesMoved": moved_count,
+        "filesWhereExistingCuesAreRemovedOrMoved": len(losing),
+        "removedOrMovedExamples": [
+            {
+                "title": i.title,
+                "artist": i.artist,
+                "removed": serato_sync.describe_times(i.removed),
+                "moved": [
+                    f"slot {slot}: {format_time(old)} to {format_time(new)}" for slot, old, new in i.moved
+                ],
+            }
+            for i in sorted(losing, key=lambda i: -len(i.removed))[:10]
+        ],
         "filesAlreadyUpToDate": len(plan.with_status("unchanged")),
         "filesSkipped": len(plan.with_status("skip")),
         "skippedBecause": dict(plan.skip_reasons),
@@ -231,10 +251,15 @@ def sync_cues_to_serato(
         return result
 
     warning = " Serato DJ Pro is running; quit it before applying." if running else ""
+    loss = (
+        f"Warning: this removes {removed} existing Serato cue(s) and moves {moved_count}, on {len(losing)} file(s). "
+        if losing
+        else ""
+    )
 
     if dry_run:
         result["summary"] = (
-            f"Would update the cues in {len(changes)} audio files (Rekordbox wins). "
+            f"{loss}Would update the cues in {len(changes)} audio files (Rekordbox wins). "
             f"{len(plan.with_status('unchanged'))} already match and {len(plan.with_status('skip'))} are skipped. "
             f"Nothing has been written.{warning}"
         )

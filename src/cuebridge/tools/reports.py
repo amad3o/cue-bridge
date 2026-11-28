@@ -310,7 +310,9 @@ def check_sync_status(
       Rekordbox's cues are read from its live database, so no XML export is
       needed (a loaded XML is only a fallback, and the report warns when it is
       older than the database). Serato's side is read from the cue tags in the
-      audio files.
+      audio files. It also looks for playlisted tracks with cues only in Serato,
+      which a sync never touches (this needs the database), and counts the Serato
+      cues a sync would remove.
 
     Apple Music is read live (the Music app must be open, and it takes about half
     a minute) unless a library is already loaded; pass reload_apple_music=true to
@@ -348,6 +350,10 @@ def check_sync_status(
         moved = library_reports.moved_file_paths(library_reports.find_missing_rekordbox_files(cues.tracks, music))
         inputs.serato_plan = serato_sync.build_sync_plan(cues.tracks, moved_files=moved)
         inputs.cues_from, inputs.cues_from_xml, inputs.cue_notes = cues.label, cues.from_xml, cues.notes
+
+        if cues.playlisted is not None:
+            in_playlists = [t for t in cues.tracks if t.trackId in cues.playlisted]
+            inputs.serato_only = serato_sync.find_serato_only(in_playlists, moved)
     except Exception as error:
         inputs.serato_error = str(error)
 
