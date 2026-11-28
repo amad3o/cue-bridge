@@ -100,7 +100,7 @@ def plan_export(
     drift_for = {p.name: p for p in drift.playlists}
     plan = ExportPlan()
 
-    if names:
+    if names is not None:  # an empty list means no playlists, not the default choice
         wanted = {n.strip().casefold() for n in names}
         chosen = [p for p in user_playlists if p.name.casefold() in wanted]
         unknown = wanted - {p.name.casefold() for p in chosen}

@@ -49,6 +49,14 @@ def outside(path: Path) -> bytes:
     return data[: location.offset] + data[location.offset + location.length :]
 
 
+class TestChoosingTracks:
+    def test_an_empty_list_means_no_tracks_never_all_of_them(self, audio):
+        track = rb_track(audio, rb_cue(slot=0, ms=1000))
+
+        assert len(sync.build_sync_plan([track]).items) == 1
+        assert sync.build_sync_plan([track], track_ids=[]).items == ()
+
+
 class TestFindSeratoOnly:
     def test_it_finds_cued_files_among_tracks_with_no_rekordbox_cue(self, audio, tmp_path):
         bare = make_mp3(tmp_path / "bare.mp3", [COLOR, BPMLOCK])

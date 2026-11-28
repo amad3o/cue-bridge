@@ -1,5 +1,6 @@
 """Loading the libraries, and looking up tracks and playlists in them."""
 
+from dataclasses import replace
 
 from mcp.server.mcpserver.exceptions import ToolError
 
@@ -11,10 +12,10 @@ from cuebridge.tools.common import (
     READ_ONLY,
     mcp,
     require_apple_library,
-    require_library,
     session,
     translate_errors,
 )
+from cuebridge.tools.cue_source import CueSource, read_cue_source
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -103,6 +104,11 @@ def get_playlist_tracks(name: str, limit: int = 50, offset: int = 0) -> dict:
     }
 
 
+def _where_from(source: CueSource) -> dict:
+    """Says where a lookup was read from, with anything the user should know about it."""
+    return {"readFrom": source.label, **({"notes": source.notes} if source.notes else {})}
+
+
 @mcp.tool(annotations=READ_ONLY)
 @translate_errors
 def search_tracks(
@@ -110,32 +116,62 @@ def search_tracks(
     has_cues: bool | None = None,
     limit: int = 25,
     offset: int = 0,
+    cue_source: str = "auto",
 ) -> dict:
-    """List tracks in the loaded library, a page at a time.
+    """List Rekordbox's tracks, a page at a time.
+
+    Read from Rekordbox's live database, so no export is needed and it is current
+    (Rekordbox may be open). A loaded XML export is used only if the database
+    can't be read; `cue_source` forces "database" or "xml". `readFrom` says
+    which was used.
 
     `query`: words that must all appear in the title, artist or file name
-    (case-insensitive). Leave empty to list everything.
+    (case-insensitive). Leave empty to list everything, including tracks in no
+    playlist.
     `has_cues`: true for only tracks with cues, false for only tracks without,
     omit for both.
     `limit` is capped at 100. Use `offset` to get the next page (see hasMore).
     """
-    return library_queries.search_tracks(require_library(), query, has_cues, limit, offset)
+    source = read_cue_source(cue_source)
+
+    return {**library_queries.search_tracks(source, query, has_cues, limit, offset), **_where_from(source)}
 
 
 @mcp.tool(annotations=READ_ONLY)
 @translate_errors
-def get_track_cues(track_id: str) -> dict:
-    """Get one track with all of its cues. `track_id` comes from search_tracks."""
-    track = require_library().tracks_by_id.get(track_id)
+def get_track_cues(track_id: str, cue_source: str = "auto") -> dict:
+    """Get one Rekordbox track with all of its cues. `track_id` comes from search_tracks.
+
+    Read from Rekordbox's live database, like search_tracks.
+    """
+    source = read_cue_source(cue_source)
+    track = source.by_id.get(track_id)
 
     if track is None:
-        raise ToolError(f"No track with ID {track_id!r}. Use search_tracks to find IDs.")
+        raise ToolError(f"No track with ID {track_id!r} in {source.label}. Use search_tracks to find IDs.")
 
-    return library_queries.track_to_detail(track)
+    return {**library_queries.track_to_detail(track), **_where_from(source)}
 
 
 @mcp.tool(annotations=READ_ONLY)
 @translate_errors
-def find_tracks_without_cues(limit: int = 25, offset: int = 0) -> dict:
-    """List tracks that have no cues, a page at a time."""
-    return library_queries.search_tracks(require_library(), has_cues=False, limit=limit, offset=offset)
+def find_tracks_without_cues(
+    limit: int = 25, offset: int = 0, playlisted_only: bool = True, cue_source: str = "auto"
+) -> dict:
+    """List Rekordbox tracks that have no cues, a page at a time.
+
+    Read from Rekordbox's live database, like search_tracks. Only tracks in a
+    playlist by default (`playlisted_only`). An XML export used as the fallback
+    can't say which those are, so then every track is listed and
+    `playlistedTracksOnly` is false. This looks at Rekordbox's cues only: a track
+    listed here may still have cues in Serato.
+    """
+    source = read_cue_source(cue_source)
+    limited = playlisted_only and source.playlisted is not None
+
+    if limited:
+        source = replace(source, tracks=[t for t in source.tracks if t.trackId in source.playlisted])
+
+    found = library_queries.search_tracks(source, has_cues=False, limit=limit, offset=offset)
+
+    return {**found, "playlistedTracksOnly": limited, **_where_from(source)}

@@ -98,7 +98,7 @@ def export_playlists_for_rekordbox(
 
     if not plan.playlists:
         summary["file"] = str(rekordbox.path)
-        summary["summary"] = (
+        summary["summary"] = "Nothing to export: no playlists were selected." if playlists == [] else (
             f"Nothing to export: all {len(plan.in_sync)} playlists already match Rekordbox. "
             "Pass playlists=[...] or all_playlists=true to export some anyway."
         )

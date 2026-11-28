@@ -117,6 +117,13 @@ class TestPlanning:
         assert len(out.new_tracks) == 1 and out.playlists[-1].keys == (str(pe.NEW_TRACK_ID_BASE + 4),)
 
 
+class TestAnEmptySelection:
+    def test_an_empty_list_of_names_chooses_nothing(self, world):
+        assert plan(world).playlists  # the default choice is not empty here
+        assert plan(world, names=[]).playlists == []
+        assert plan(world, names=[], all_playlists=True).playlists == []
+
+
 class TestBuilding:
     def build(self, world, **kwargs):
         music, rekordbox, _ = world
@@ -227,6 +234,14 @@ class TestTool:
         server.load_rekordbox_library(str(rb_path))
         server.load_apple_music_library(str(apple))
         return tmp_path
+
+    def test_an_empty_list_writes_nothing_and_says_why(self, loaded):
+        before = (loaded / "rekordbox.xml").read_bytes()
+
+        result = server.export_playlists_for_rekordbox(playlists=[], dry_run=False, allow_stale_export=True)
+
+        assert result["summary"] == "Nothing to export: no playlists were selected."
+        assert (loaded / "rekordbox.xml").read_bytes() == before
 
     @pytest.fixture
     def database(self, loaded, monkeypatch):

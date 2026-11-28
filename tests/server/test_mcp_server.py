@@ -231,6 +231,15 @@ class TestSyncToSerato:
         assert example["seratoNow"] == "1: 0:00.500"
         assert example["afterSync"] == "1: 0:12.345, 2: 0:30.500"
 
+    def test_an_empty_list_of_tracks_syncs_nothing_even_when_applied(self, library):
+        before = library["wav"].read_bytes(), library["mp3"].read_bytes()
+
+        result = server.sync_cues_to_serato(track_ids=[], dry_run=False, expected_files=0)
+
+        assert result["filesToChange"] == 0
+        assert (library["wav"].read_bytes(), library["mp3"].read_bytes()) == before
+        assert not serato_sync.journal_dir().exists()
+
     def test_the_preview_counts_the_serato_cues_it_would_remove_or_move(self, library):
         # the WAV's cue in slot 1 would move; a second Serato cue, in a slot Rekordbox leaves empty, would go
         make_wav(library["wav"], [COLOR, CueEntry(0, 500, "#cc0000"), CueEntry(5, 90000, "#cc0000"), BPMLOCK])

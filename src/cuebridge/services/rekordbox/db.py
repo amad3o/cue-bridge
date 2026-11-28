@@ -567,7 +567,7 @@ def plan_additions(snapshot: DbSnapshot, music: MusicLibrary, only: list[str] | 
     result = drift.compare_libraries(
         tracks, [RekordboxPlaylist(p.name, (), p.content_ids) for p in unique], music
     )
-    wanted = {n.strip().casefold() for n in only} if only else None
+    wanted = {n.strip().casefold() for n in only} if only is not None else None  # an empty list means none, not all
     lengths = {p.id: len(p.content_ids) for p in top}
     plan = DbPlan()
 

@@ -438,6 +438,16 @@ class TestTools:
         with pytest.raises(ToolError, match="load_apple_music_library"):
             server.sync_playlists_to_rekordbox()
 
+    def test_an_empty_list_of_playlists_adds_nothing_even_when_applied(self, env):
+        server.load_apple_music_library(str(self.xml))
+        before = env["db"].read_bytes()
+
+        assert server.sync_playlists_to_rekordbox()["additions"] > 0  # there is something an empty list must not do
+
+        result = server.sync_playlists_to_rekordbox(playlists=[], dry_run=False, expected_additions=0)
+
+        assert result["additions"] == 0 and env["db"].read_bytes() == before
+
     def test_a_dry_run_lists_what_would_happen(self, env):
         server.load_apple_music_library(str(self.xml))
         before = env["db"].read_bytes()

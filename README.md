@@ -11,7 +11,7 @@ Early development, used on one real library. There are 29 tools; results are pag
 | Area | Tools |
 | --- | --- |
 | Check everything | `check_sync_status` (read-only; names the tool that fixes each difference) |
-| Read and search | `load_apple_music_library` (live from the Music app, or an XML), `get_playlist_tracks`, `load_rekordbox_library`, `search_tracks`, `get_track_cues`, `find_tracks_without_cues` (the last three read the XML export) |
+| Read and search | `load_apple_music_library` (live from the Music app, or an XML), `get_playlist_tracks`, `load_rekordbox_library`, `search_tracks`, `get_track_cues`, `find_tracks_without_cues` (the last three read the live database, or a loaded XML export if it can't be read) |
 | Compare and audit | `compare_libraries`, `list_library_differences`, `find_missing_files`, `compare_cues`, `audit_music_library` |
 | Cues to Serato | `sync_cues_to_serato` writes Rekordbox's cues into MP3 and WAV tags; Rekordbox wins |
 | Cues in Rekordbox | `copy_serato_cues_to_rekordbox` (Serato's hot cues, only into tracks with none in Rekordbox), `set_default_cue` (hot cue A at 0:00 on tracks with no cue in Rekordbox, once their files are confirmed to have no Serato cues), `duplicate_memory_cues_to_hot_cues` |

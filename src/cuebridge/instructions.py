@@ -11,10 +11,9 @@ sets) and Serato (playing, from the Apple Music playlists).
 Rules:
 - Anything about Apple Music, including the sync check, playlist sync and repairs, needs load_apple_music_library
   first (with no path, it reads the open Music app).
-- Cue syncing, cue comparison and the cue-writing tools read Rekordbox's live database. Only search_tracks,
-  get_track_cues, find_tracks_without_cues, compare_libraries, list_library_differences, find_missing_files and
-  export_playlists_for_rekordbox need a Rekordbox XML export: call load_rekordbox_library with its path (ask the
-  user if you don't know it).
+- Track search, cue lookup, cue syncing, cue comparison and the cue-writing tools read Rekordbox's live database.
+  Only compare_libraries, list_library_differences, find_missing_files and export_playlists_for_rekordbox need a
+  Rekordbox XML export: call load_rekordbox_library with its path (ask the user if you don't know it).
 - Only tracks in a playlist matter. Ignore Apple Music tracks in no playlist when comparing or transferring to
   Rekordbox.
 - Every tool that changes something starts as a dry run. Run it, show the user what would change in plain words,

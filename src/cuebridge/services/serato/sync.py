@@ -297,7 +297,7 @@ def build_sync_plan(
     `moved_files` maps a track ID to the path of its file when it is no longer
     where Rekordbox says (see library_reports.moved_file_paths).
     """
-    wanted = set(track_ids) if track_ids else None
+    wanted = set(track_ids) if track_ids is not None else None  # an empty list means no tracks, never all of them
     candidates = [t for t in tracks if t.cues and (wanted is None or t.trackId in wanted)]
     loops = sum(1 for t in candidates for c in t.cues if c.cueType == "loop")
 
