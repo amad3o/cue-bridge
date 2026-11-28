@@ -18,6 +18,7 @@ NOT_PREVIEWED = (
     "Refused, and nothing was changed: the user hasn't seen a dry run of this exact call. Call this tool with dry_run=true "
     "and the same other arguments, tell the user what it would change, and stop. Apply it only after the user replies."
 )
+TRIMMED = "[Old tool result shortened"  # how cuebridge.agent.history starts the note it leaves in a long result's place
 MAX_LINES = 18
 MAX_LINE_CHARS = 110
 MAX_ITEMS = 4
@@ -53,14 +54,19 @@ def output_text(output: Any) -> str:
     return ""
 
 
-def shown_previews(history: Any) -> dict[str, str]:
-    """The dry runs in `history` that still cover a real call: call key -> the dry run's result."""
+def is_untouchable(result: str) -> bool:
+    """A failed or refused call. It neither previews nor uses up a preview, and its text is how that is known."""
+    return result.startswith(ERROR_PREFIX) or result in (DECLINED, NOT_PREVIEWED)
+
+
+def _replay(history: Any) -> dict[str, tuple[Any, str]]:
+    """The dry runs in `history` that still cover a real call: call key -> (the call's ID, its result)."""
     if not isinstance(history, list):
         return {}
 
     items = [item for item in history if isinstance(item, dict)]
     outputs = {item.get("call_id"): output_text(item.get("output")) for item in items if item.get("type") == "function_call_output"}
-    previews: dict[str, str] = {}
+    previews: dict[str, tuple[Any, str]] = {}
 
     for item in items:
         if item.get("type") != "function_call":
@@ -69,17 +75,30 @@ def shown_previews(history: Any) -> dict[str, str]:
         arguments = parse_arguments(item.get("arguments"))
         result = outputs.get(item.get("call_id"))
 
-        if arguments is None or not result or result.startswith(ERROR_PREFIX) or result in (DECLINED, NOT_PREVIEWED):
-            continue  # unreadable, unfinished, failed or refused: it neither previews nor uses up a preview
+        if arguments is None or not result or is_untouchable(result):
+            continue  # unreadable, unfinished, failed or refused
 
         key = call_key(str(item.get("name")), arguments)
 
         if is_real_change(arguments):
             previews.pop(key, None)  # applied: another run needs a new dry run
-        else:
-            previews[key] = result
+        elif not result.startswith(TRIMMED):  # a shortened result can't be shown to the user, so it covers nothing
+            previews[key] = (item.get("call_id"), result)
 
     return previews
+
+
+def shown_previews(history: Any) -> dict[str, str]:
+    """The dry runs in `history` that still cover a real call: call key -> the dry run's result."""
+    return {key: result for key, (_, result) in _replay(history).items()}
+
+
+def unused_preview_calls(history: Any, writers: frozenset[str]) -> set[Any]:
+    """The call IDs of writing tools' dry runs that still cover a real change.
+
+    `shown_previews` also holds read-only calls (they have no dry_run=false either), which never need approval.
+    """
+    return {call_id for key, (call_id, _) in _replay(history).items() if json.loads(key)[0] in writers}
 
 
 def describe(result: str) -> list[str]:

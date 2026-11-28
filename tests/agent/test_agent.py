@@ -252,7 +252,7 @@ class TestAnsweringOneMessage:
             for approve in answers:
                 ui.incoming.put_nowait({"type": "approval_response", "id": "approval-1", "approve": approve})
 
-            return await agent_module.answer(agent, history, "go", ui)
+            return await agent_module.answer(agent, history, "go", ui, frozenset({"sync_thing"}))
 
         return asyncio.run(go()), [json.loads(line) for line in sent]
 
@@ -278,6 +278,94 @@ class TestAnsweringOneMessage:
         assert [e["type"] for e in events][-2:] == ["error", "usage"]
         assert events[-1]["turn"] == {"calls": 1, "input": 100, "cached": 0, "output": 7}
         assert conversation == history
+
+
+class TestOldResultsInARealConversation:
+    """Several real SDK turns through `answer`, so the history has the SDK's own shape."""
+
+    BIG = "x" * 5000
+
+    def converse(self, turns):
+        """`turns` is a list of (scripted replies, approval answers). Returns the world, each turn's model and the history."""
+        writes, asked, models = [], [], []
+
+        @function_tool(name_override="sync_thing", needs_approval=True)
+        def sync_thing(dry_run: bool = True) -> str:
+            writes.append(dry_run)
+            return json.dumps({"summary": "would change 2 things", "files": self.BIG})
+
+        @function_tool(name_override="look_at_thing")
+        def look_at_thing() -> str:
+            return json.dumps({"summary": "looked", "tracks": self.BIG})
+
+        async def go():
+            history, shown = [], []
+
+            for number, (replies, approvals) in enumerate(turns):
+                model = ScriptedModel(*replies)
+                models.append(model)
+                agent = Agent(name="test", model=model, tools=[sync_thing, look_at_thing])
+                ui = JsonUI(lambda line: shown.append(json.loads(line)))
+
+                for approve in approvals:
+                    ui.incoming.put_nowait({"type": "approval_response", "id": "approval-1", "approve": approve})
+
+                history = await agent_module.answer(agent, history, f"turn {number}", ui, frozenset({"sync_thing"}))
+
+            asked.extend(e for e in shown if e["type"] == "approval_request")
+            return history
+
+        history = asyncio.run(go())
+        return writes, asked, models, history
+
+    @staticmethod
+    def result_of(history, call_id):
+        (item,) = [i for i in history if i.get("type") == "function_call_output" and i["call_id"] == call_id]
+        return json.dumps(item["output"])
+
+    def test_an_old_read_is_shortened_and_later_turns_are_sent_the_short_one(self):
+        turns = [
+            ([[call("look_at_thing", {}, "look")], [say("a")]], []),
+            ([[say("b")]], []),
+            ([[say("c")]], []),
+            ([[say("d")]], []),
+        ]
+
+        _, _, models, history = self.converse(turns)
+
+        assert "Old tool result shortened" in self.result_of(history, "look")
+        assert "looked" in self.result_of(history, "look") and self.BIG not in json.dumps(history)
+        assert self.BIG in json.dumps(models[1].inputs[0], default=str)  # still whole in the very next turn
+        assert self.BIG not in json.dumps(models[3].inputs[0], default=str)
+
+    def test_an_old_unused_dry_run_stays_whole_and_can_still_be_applied(self):
+        turns = [
+            ([[call("sync_thing", {}, "preview")], [say("apply?")]], []),
+            ([[say("b")]], []),
+            ([[say("c")]], []),
+            ([[say("d")]], []),
+            ([[call("sync_thing", {"dry_run": False}, "apply")], [say("applied")]], [True]),
+        ]
+
+        writes, asked, _, history = self.converse(turns)
+
+        assert writes == [True, False]
+        assert asked[0]["preview"][0] == "would change 2 things"
+        assert any(self.BIG[:50] in line for line in asked[0]["preview"])  # the panel got the real result, not the note
+
+    def test_once_applied_the_dry_run_is_shortened_too_and_covers_nothing(self):
+        turns = [
+            ([[call("sync_thing", {}, "preview")], [say("apply?")]], []),
+            ([[call("sync_thing", {"dry_run": False}, "apply")], [say("applied")]], [True]),
+            ([[say("c")]], []),
+            ([[say("d")]], []),
+            ([[call("sync_thing", {"dry_run": False}, "again")], [say("preview first")]], [True]),
+        ]
+
+        writes, asked, _, history = self.converse(turns)
+
+        assert "Old tool result shortened" in self.result_of(history, "preview")
+        assert writes == [True, False] and len(asked) == 1  # the second attempt was refused without asking
 
 
 class TestIsRealChange:

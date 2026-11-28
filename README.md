@@ -104,7 +104,7 @@ The screen turns events into state (`lib/state.ts`) and draws it: a spinner, a l
 - Apart from the dry-run result in the approval panel, the screen never receives tool results, so what you read in a reply is the model's retelling.
 - That panel shows what the dry run said at the time, shortened. The tools' own expected counts are what catch a library that changed since.
 - If a turn fails, it's left out of the history, so the model forgets any write made in it (and any dry run, which then has to be repeated).
-- History is never trimmed or saved; the token line under each reply shows how it grows. SDK tracing is off.
+- To slow history's growth, large tool results older than the last two turns are shortened to a note with the tool's summary; unused dry runs, errors and refusals stay whole (`agent/history.py`). Messages and replies are never trimmed, and nothing is saved. SDK tracing is off.
 
 ### Where to look
 

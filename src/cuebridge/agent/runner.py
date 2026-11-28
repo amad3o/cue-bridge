@@ -22,6 +22,7 @@ from agents import Agent, Runner, set_tracing_disabled
 from agents.mcp import MCPServerStdio
 from dotenv import load_dotenv
 
+from cuebridge.agent.history import trim
 from cuebridge.agent.previews import DECLINED, NOT_PREVIEWED, call_key, describe, is_real_change, shown_previews
 from cuebridge.agent.protocol import JsonUI, parse_arguments
 from cuebridge.instructions import GUIDANCE
@@ -127,8 +128,12 @@ def build_agent(server: MCPServerStdio) -> Agent:
     )
 
 
-async def answer(agent: Agent, conversation: list[Any], text: str, ui: JsonUI) -> list[Any]:
-    """Answer one message, telling the screen the reply or the error, then the tokens used. Returns the new history."""
+async def answer(agent: Agent, conversation: list[Any], text: str, ui: JsonUI, writers: frozenset[str]) -> list[Any]:
+    """Answer one message, telling the screen the reply or the error, then the tokens used. Returns the new history.
+
+    Old, large tool results in the new history are shortened; `writers` names the tools that can change something,
+    whose unused dry runs must stay whole.
+    """
     ui.tokens.start_turn()
 
     try:
@@ -138,7 +143,7 @@ async def answer(agent: Agent, conversation: list[Any], text: str, ui: JsonUI) -
         return conversation
     else:
         ui.show_reply(result.final_output)
-        return result.to_input_list()
+        return trim(result.to_input_list(), writers)
     finally:
         ui.show_usage()
 
@@ -156,12 +161,13 @@ async def chat(ui: JsonUI, stdin: Any) -> None:
     ) as server:
         agent = build_agent(server)
         tools = await server.list_tools()
-        ui.ready(len(tools), sum(tool_needs_approval(t) for t in tools))
+        writers = frozenset(t.name for t in tools if tool_needs_approval(t))
+        ui.ready(len(tools), len(writers))
         conversation: list[Any] = []
 
         while (line := await ui.next_user_text()) is not None:
             if line.strip():
-                conversation = await answer(agent, conversation, line, ui)
+                conversation = await answer(agent, conversation, line, ui, writers)
 
 
 def main() -> None:
